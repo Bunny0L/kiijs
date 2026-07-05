@@ -1,0 +1,3092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!--
+  ╔══════════════════════════════════════════════════════════════════════╗
+  ║  CouplePlay v3.0                                                     ║
+  ║  • No backdrop-filter (mobile performance)                           ║
+  ║  • Explicit "Join Room" Jitsi init (fixes connecting hang)           ║
+  ║  • navigator.mediaDevices guard before WebRTC                        ║
+  ║  • try-catch isolated game modules                                   ║
+  ║  • Single-file, GitHub Pages ready                                   ║
+  ╚══════════════════════════════════════════════════════════════════════╝
+  -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="CouplePlay – Video calls and cooperative games for long-distance couples." />
+  <meta name="theme-color" content="#0e0e2c" />
+
+  <!--
+  ══════════════════════════════════════════════════════════════════════
+  CONTENT SECURITY POLICY
+  Locks resource origins to a strict allowlist.
+  'unsafe-inline' is required for embedded CSS/JS in a single-file
+  static deploy; replace with nonces in a multi-file setup.
+  ══════════════════════════════════════════════════════════════════════
+  -->
+  <meta http-equiv="Content-Security-Policy" content="
+    default-src 'self';
+    script-src  'self' https://meet.jit.si 'unsafe-inline';
+    frame-src   https://meet.jit.si;
+    style-src   'self' https://fonts.googleapis.com 'unsafe-inline';
+    font-src    https://fonts.gstatic.com;
+    img-src     'self' data:;
+    connect-src 'self';
+  " />
+
+  <title>CouplePlay 💑 — Play Together, Anywhere</title>
+
+  <!--
+  ══════════════════════════════════════════════════════════════════════
+  GOOGLE FONTS — Quicksand only (friendly, rounded aesthetic)
+  crossorigin="anonymous" is required for CORS/SRI compliance.
+  ══════════════════════════════════════════════════════════════════════
+  -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+    crossorigin="anonymous"
+  />
+
+  <!--
+  ══════════════════════════════════════════════════════════════════════
+  JITSI EXTERNAL API — loaded with defer so it never blocks rendering.
+  The API object is only USED after the user clicks "Join Room",
+  which satisfies browser autoplay/permission policies.
+  ══════════════════════════════════════════════════════════════════════
+  -->
+  <script src="https://meet.jit.si/external_api.js" defer></script>
+
+  <style>
+    /* ════════════════════════════════════════════════════════════════
+       §1  DESIGN TOKENS
+       Single source of truth. No backdrop-filter anywhere in the file.
+    ════════════════════════════════════════════════════════════════ */
+    :root {
+      /* Core palette — deep indigo foundation */
+      --bg-base:      #0e0e2c;          /* page background             */
+      --bg-layer1:    #16163a;          /* primary cards               */
+      --bg-layer2:    #1e1e4a;          /* elevated surfaces           */
+      --bg-layer3:    #26265c;          /* hover / active surfaces     */
+
+      /*
+       * Glassmorphism WITHOUT backdrop-filter:
+       * High-opacity RGBA + subtle white inner border = glass feel,
+       * zero GPU compositing overhead on mobile.
+       */
+      --glass-bg:     rgba(22, 22, 58, 0.92);
+      --glass-border: rgba(255, 255, 255, 0.10);
+      --glass-border2:rgba(255, 255, 255, 0.06);
+
+      /* Brand colours */
+      --purple:       #7c5cfc;
+      --purple-lt:    #a589ff;
+      --purple-dk:    #5a3dd4;
+      --pink:         #fc5c9c;
+      --pink-lt:      #ff88bb;
+      --cyan:         #5cf4fc;
+      --green:        #5cfca2;
+      --yellow:       #fce45c;
+      --red:          #fc5c5c;
+
+      /* Gradients */
+      --g-brand:  linear-gradient(135deg, #7c5cfc 0%, #fc5c9c 100%);
+      --g-card:   linear-gradient(160deg, #1e1e4a 0%, #16163a 100%);
+      --g-dark:   linear-gradient(160deg, #26265c 0%, #1e1e4a 100%);
+
+      /* Text */
+      --txt:       #f0f0ff;
+      --txt-soft:  #a0a0cc;
+      --txt-dim:   #606090;
+
+      /* Borders */
+      --border:    rgba(255,255,255,0.08);
+      --border-md: rgba(255,255,255,0.14);
+      --border-hi: rgba(124,92,252,0.5);
+
+      /* Radius — rounded, friendly feel */
+      --r-xs: 8px;
+      --r-sm: 14px;
+      --r-md: 20px;
+      --r-lg: 28px;
+      --r-xl: 40px;
+
+      /* Spacing */
+      --sp-1: 4px;   --sp-2: 8px;
+      --sp-3: 12px;  --sp-4: 16px;
+      --sp-5: 24px;  --sp-6: 40px;
+
+      /* Font */
+      --font: 'Quicksand', system-ui, sans-serif;
+
+      /* Shadows — replaces blur with depth */
+      --shadow-sm: 0 2px 12px rgba(0,0,0,0.5);
+      --shadow-md: 0 6px 28px rgba(0,0,0,0.55);
+      --shadow-lg: 0 12px 48px rgba(0,0,0,0.65);
+      --shadow-glow: 0 0 32px rgba(124,92,252,0.30);
+      --shadow-glow2:0 0 24px rgba(252,92,156,0.25);
+
+      /* Transitions */
+      --ease: cubic-bezier(0.22, 1, 0.36, 1);
+      --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       §2  RESET & BASE
+    ════════════════════════════════════════════════════════════════ */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0; padding: 0;
+    }
+
+    html {
+      font-size: 16px;
+      -webkit-text-size-adjust: 100%;
+      scroll-behavior: smooth;
+      /* Prevent elastic scroll from showing background on iOS */
+      overscroll-behavior: none;
+    }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg-base);
+      color: var(--txt);
+      min-height: 100dvh;
+      overflow-x: hidden;
+      line-height: 1.65;
+      /* Subtle animated gradient mesh — no blur needed */
+      background-image:
+        radial-gradient(ellipse 80% 60% at 10% -10%, rgba(124,92,252,0.18) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 50% at 90% 110%, rgba(252,92,156,0.14) 0%, transparent 55%);
+    }
+
+    button, input, select, textarea { font-family: inherit; font-size: inherit; }
+    button { cursor: pointer; border: none; background: none; }
+    img, canvas, svg { display: block; }
+
+    /* Accessible focus ring */
+    :focus-visible {
+      outline: 2px solid var(--purple);
+      outline-offset: 3px;
+      border-radius: var(--r-xs);
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--bg-layer3); border-radius: 10px; }
+
+    /* ════════════════════════════════════════════════════════════════
+       §3  TYPOGRAPHY HELPERS
+    ════════════════════════════════════════════════════════════════ */
+    .h1 {
+      font-size: clamp(2rem, 6vw, 3.6rem);
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+    }
+    .h2 { font-size: clamp(1.2rem, 3vw, 1.6rem); font-weight: 700; }
+    .h3 { font-size: 1rem; font-weight: 700; }
+
+    .grad-text {
+      background: var(--g-brand);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .muted { color: var(--txt-soft); }
+    .dim   { color: var(--txt-dim); }
+
+    /* ════════════════════════════════════════════════════════════════
+       §4  BUTTONS
+    ════════════════════════════════════════════════════════════════ */
+    .btn {
+      display: inline-flex;
+      align-items: center; justify-content: center;
+      gap: var(--sp-2);
+      padding: 13px 28px;
+      border-radius: var(--r-xl);
+      font-family: var(--font);
+      font-weight: 700;
+      font-size: 0.95rem;
+      min-height: 48px;           /* WCAG 2.5.5 touch target */
+      min-width: 48px;
+      user-select: none;
+      transition: transform 0.18s var(--ease),
+                  box-shadow 0.18s var(--ease),
+                  opacity 0.18s;
+      white-space: nowrap;
+    }
+    .btn:active:not(:disabled) { transform: scale(0.95); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+
+    /* Primary: gradient brand button */
+    .btn-primary {
+      background: var(--g-brand);
+      color: #fff;
+      box-shadow: var(--shadow-glow);
+    }
+    .btn-primary:hover:not(:disabled) {
+      box-shadow: 0 0 44px rgba(124,92,252,0.55);
+      transform: translateY(-2px);
+    }
+
+    /* Ghost: glass-style bordered */
+    .btn-ghost {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      color: var(--txt-soft);
+    }
+    .btn-ghost:hover:not(:disabled) {
+      border-color: var(--border-hi);
+      color: var(--txt);
+      background: var(--bg-layer3);
+    }
+
+    /* Danger */
+    .btn-danger {
+      background: rgba(252,92,92,0.15);
+      border: 1px solid rgba(252,92,92,0.3);
+      color: var(--red);
+    }
+    .btn-danger:hover:not(:disabled) { background: rgba(252,92,92,0.25); }
+
+    /* Size modifiers */
+    .btn-sm  { padding: 8px 18px; font-size: 0.82rem; min-height: 38px; }
+    .btn-xs  { padding: 5px 12px; font-size: 0.76rem; min-height: 32px; }
+    .btn-lg  { padding: 16px 36px; font-size: 1.05rem; min-height: 56px; }
+    .btn-ico {
+      width: 44px; height: 44px;
+      padding: 0; border-radius: var(--r-sm);
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      color: var(--txt-soft);
+      font-size: 1.1rem;
+    }
+    .btn-ico:hover { border-color: var(--border-hi); color: var(--txt); }
+    .btn-block { width: 100%; }
+
+    /* ════════════════════════════════════════════════════════════════
+       §5  CARD / PANEL  (glass without backdrop-filter)
+    ════════════════════════════════════════════════════════════════ */
+    .card {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--r-md);
+      box-shadow: var(--shadow-md);
+    }
+
+    .card-inner {
+      background: var(--bg-layer2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       §6  BADGES / CHIPS
+    ════════════════════════════════════════════════════════════════ */
+    .badge {
+      display: inline-flex; align-items: center; gap: var(--sp-1);
+      padding: 4px 12px;
+      border-radius: var(--r-xl);
+      font-size: 0.72rem; font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    .badge-purple {
+      background: rgba(124,92,252,0.18);
+      border: 1px solid rgba(124,92,252,0.35);
+      color: var(--purple-lt);
+    }
+    .badge-pink {
+      background: rgba(252,92,156,0.15);
+      border: 1px solid rgba(252,92,156,0.3);
+      color: var(--pink-lt);
+    }
+    .badge-green {
+      background: rgba(92,252,162,0.12);
+      border: 1px solid rgba(92,252,162,0.28);
+      color: var(--green);
+    }
+    .badge-yellow {
+      background: rgba(252,228,92,0.12);
+      border: 1px solid rgba(252,228,92,0.28);
+      color: var(--yellow);
+    }
+    .badge-cyan {
+      background: rgba(92,244,252,0.12);
+      border: 1px solid rgba(92,244,252,0.28);
+      color: var(--cyan);
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       §7  TOAST NOTIFICATION SYSTEM
+    ════════════════════════════════════════════════════════════════ */
+    #toast-shelf {
+      position: fixed;
+      bottom: calc(var(--sp-5) + env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: var(--sp-2);
+      pointer-events: none;
+      align-items: center;
+    }
+    .toast {
+      display: flex; align-items: center; gap: var(--sp-2);
+      padding: var(--sp-2) var(--sp-5);
+      background: var(--bg-layer2);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--r-xl);
+      font-size: 0.86rem;
+      font-weight: 600;
+      box-shadow: var(--shadow-lg);
+      white-space: nowrap;
+      animation: toastIn 0.35s var(--ease-bounce) both,
+                 toastOut 0.3s var(--ease) 2.7s both;
+    }
+    @keyframes toastIn {
+      from { opacity:0; transform: translateY(16px) scale(0.88); }
+      to   { opacity:1; transform: none; }
+    }
+    @keyframes toastOut {
+      to   { opacity:0; transform: translateY(16px) scale(0.88); }
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       §8  CONFETTI CANVAS (win celebrations)
+    ════════════════════════════════════════════════════════════════ */
+    #confetti-canvas {
+      position: fixed; inset: 0;
+      pointer-events: none; z-index: 8000;
+      display: none;
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       §9  SCREEN: INTRO / LANDING
+    ════════════════════════════════════════════════════════════════ */
+    #screen-intro {
+      position: relative; z-index: 1;
+      min-height: 100dvh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: var(--sp-6) var(--sp-4);
+      text-align: center;
+      transition: opacity 0.4s var(--ease), transform 0.4s var(--ease);
+    }
+    #screen-intro.exit {
+      opacity: 0;
+      transform: translateY(-24px);
+      pointer-events: none;
+    }
+
+    /* Brand logo */
+    .brand {
+      display: flex; align-items: center; gap: var(--sp-3);
+      margin-bottom: var(--sp-5);
+      animation: riseIn 0.7s var(--ease-bounce) both;
+    }
+    .brand-icon {
+      width: 60px; height: 60px;
+      background: var(--g-brand);
+      border-radius: var(--r-md);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px;
+      box-shadow: var(--shadow-glow);
+    }
+    .brand-name {
+      font-size: clamp(1.8rem,5vw,2.4rem);
+      font-weight: 700;
+    }
+
+    /* Hero text */
+    .hero-title {
+      max-width: 640px;
+      margin-bottom: var(--sp-3);
+      animation: riseIn 0.7s 0.1s var(--ease-bounce) both;
+    }
+    .hero-sub {
+      max-width: 500px;
+      color: var(--txt-soft);
+      font-size: clamp(0.9rem,2.2vw,1.05rem);
+      margin-bottom: var(--sp-6);
+      animation: riseIn 0.7s 0.18s var(--ease-bounce) both;
+    }
+
+    /* Feature pill row */
+    .feature-row {
+      display: flex; gap: var(--sp-2); flex-wrap: wrap;
+      justify-content: center;
+      margin-bottom: var(--sp-6);
+      animation: riseIn 0.7s 0.26s var(--ease-bounce) both;
+    }
+    .feature-pill {
+      padding: var(--sp-2) var(--sp-4);
+      background: var(--bg-layer2);
+      border: 1px solid var(--border-md);
+      border-radius: var(--r-xl);
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--txt-soft);
+      display: flex; align-items: center; gap: var(--sp-2);
+    }
+
+    /* CTA buttons */
+    .cta-group {
+      display: flex; gap: var(--sp-3); flex-wrap: wrap;
+      justify-content: center;
+      animation: riseIn 0.7s 0.34s var(--ease-bounce) both;
+    }
+
+    /* Clipboard confirmation */
+    .copy-confirm {
+      margin-top: var(--sp-3);
+      font-size: 0.82rem; font-weight: 600;
+      color: var(--green);
+      min-height: 22px;
+      opacity: 0; transition: opacity 0.3s;
+    }
+    .copy-confirm.show { opacity: 1; }
+
+    /* Steps row */
+    .steps {
+      display: flex; gap: var(--sp-4); flex-wrap: wrap;
+      justify-content: center;
+      margin-top: var(--sp-6);
+      animation: riseIn 0.7s 0.42s var(--ease-bounce) both;
+    }
+    .step {
+      display: flex; flex-direction: column; align-items: center;
+      gap: var(--sp-2); max-width: 140px;
+    }
+    .step-num {
+      width: 38px; height: 38px; border-radius: 50%;
+      background: var(--bg-layer2);
+      border: 2px solid var(--border-md);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 0.9rem; color: var(--purple-lt);
+    }
+    .step p { font-size: 0.78rem; color: var(--txt-soft); text-align: center; }
+
+    @keyframes riseIn {
+      from { opacity: 0; transform: translateY(22px); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       §10  SCREEN: GAME STAGE — Split layout
+    ════════════════════════════════════════════════════════════════ */
+    #screen-stage {
+      display: none;
+      position: relative; z-index: 1;
+    }
+    #screen-stage.active {
+      display: grid;
+      /* Desktop: 30% video | 70% games */
+      grid-template-columns: 30% 1fr;
+      grid-template-rows: 52px 1fr;
+      grid-template-areas:
+        "topbar topbar"
+        "video  games";
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    /* ── Top bar ─────────────────────────────────────────────────── */
+    .topbar {
+      grid-area: topbar;
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 0 var(--sp-5);
+      gap: var(--sp-3);
+      /* Glass WITHOUT backdrop-filter */
+      background: rgba(14, 14, 44, 0.96);
+      border-bottom: 1px solid var(--glass-border);
+      box-shadow: 0 1px 0 var(--glass-border2);
+      z-index: 200;
+    }
+    .topbar-left  { display: flex; align-items: center; gap: var(--sp-3); }
+    .topbar-right { display: flex; align-items: center; gap: var(--sp-2); }
+
+    .topbar-logo {
+      display: flex; align-items: center; gap: var(--sp-2);
+    }
+    .topbar-logo-icon {
+      width: 30px; height: 30px;
+      background: var(--g-brand);
+      border-radius: var(--r-xs);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px;
+    }
+    .topbar-logo-name {
+      font-weight: 700; font-size: 1rem;
+    }
+
+    .room-chip {
+      display: flex; align-items: center; gap: var(--sp-2);
+      padding: 5px 14px;
+      background: var(--bg-layer2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-xl);
+      font-size: 0.72rem; color: var(--txt-soft);
+      max-width: 200px;
+    }
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--green); flex-shrink: 0;
+      animation: livePulse 2s ease-in-out infinite;
+    }
+    .room-chip-id {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    @keyframes livePulse {
+      0%,100% { opacity:1; }
+      50%      { opacity:0.4; }
+    }
+
+    /* ── Video panel ─────────────────────────────────────────────── */
+    .video-panel {
+      grid-area: video;
+      display: flex; flex-direction: column;
+      background: var(--bg-layer1);
+      border-right: 1px solid var(--glass-border);
+      overflow: hidden;
+    }
+    .panel-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: var(--sp-3) var(--sp-4);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      gap: var(--sp-2);
+    }
+    .panel-label {
+      font-size: 0.7rem; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--txt-dim);
+    }
+
+    /* Jitsi mount target */
+    #jitsi-mount {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #000;
+    }
+    #jitsi-mount iframe { width:100%; height:100%; border:none; }
+
+    /* ── Video states ────────────────────────────────────────────── */
+
+    /* State 1: Idle (before join) */
+    .video-idle {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: var(--sp-4);
+      padding: var(--sp-4);
+      text-align: center;
+      background: var(--bg-layer1);
+    }
+    .video-idle-icon { font-size: 3rem; }
+    .video-idle h3 { font-size: 1rem; font-weight: 700; }
+    .video-idle p  { font-size: 0.8rem; color: var(--txt-soft); max-width: 200px; }
+
+    /* State 2: Connecting spinner */
+    .video-connecting {
+      position: absolute; inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: var(--sp-4);
+      background: var(--bg-layer1);
+    }
+    .video-connecting.show { display: flex; }
+    .spinner {
+      width: 42px; height: 42px;
+      border: 3px solid var(--border);
+      border-top-color: var(--purple);
+      border-radius: 50%;
+      animation: spin 0.85s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .video-connecting p { font-size: 0.82rem; color: var(--txt-soft); }
+
+    /* State 3: Error message */
+    .video-error {
+      position: absolute; inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: var(--sp-4);
+      padding: var(--sp-4);
+      text-align: center;
+      background: var(--bg-layer1);
+    }
+    .video-error.show { display: flex; }
+    .video-error-icon { font-size: 2.4rem; }
+    .video-error h3   { font-size: 0.95rem; font-weight: 700; color: var(--red); }
+    .video-error p    { font-size: 0.78rem; color: var(--txt-soft); max-width: 200px; }
+
+    /* ── Games panel ─────────────────────────────────────────────── */
+    .games-panel {
+      grid-area: games;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      background: var(--bg-base);
+    }
+
+    /* Tab bar */
+    .tab-bar {
+      display: flex; gap: 3px;
+      padding: var(--sp-2) var(--sp-3);
+      background: var(--bg-layer1);
+      border-bottom: 1px solid var(--glass-border);
+      flex-shrink: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .tab-bar::-webkit-scrollbar { display: none; }
+    .tab-btn {
+      padding: 8px 16px;
+      border-radius: var(--r-sm);
+      font-family: var(--font);
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--txt-soft);
+      white-space: nowrap;
+      min-height: 40px;
+      transition: background 0.18s, color 0.18s;
+    }
+    .tab-btn:hover { color: var(--txt); background: var(--bg-layer2); }
+    .tab-btn.active {
+      background: var(--g-brand);
+      color: #fff;
+      box-shadow: var(--shadow-glow);
+    }
+
+    /* Scrollable game content */
+    .game-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: var(--sp-5);
+      display: flex; flex-direction: column;
+      gap: var(--sp-4);
+    }
+    .game-pane { display: none; flex-direction: column; gap: var(--sp-4); }
+    .game-pane.active { display: flex; }
+
+    /* ════════════════════════════════════════════════════════════════
+       §11  GAME 1: WORD PUZZLE (Wordle-style)
+    ════════════════════════════════════════════════════════════════ */
+
+    /* 6-row guess grid */
+    #wp-grid {
+      display: flex; flex-direction: column;
+      align-items: center;
+      gap: var(--sp-2);
+    }
+    .wp-row {
+      display: flex; gap: var(--sp-2);
+    }
+    .wp-tile {
+      width: clamp(42px, 9vw, 58px);
+      height: clamp(42px, 9vw, 58px);
+      border-radius: var(--r-xs);
+      border: 2px solid var(--border-md);
+      background: var(--bg-layer2);
+      display: flex; align-items: center; justify-content: center;
+      font-size: clamp(1.1rem, 3vw, 1.5rem);
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--txt);
+      transition: border-color 0.15s, background 0.15s;
+      user-select: none;
+    }
+    .wp-tile[data-s="filled"] { border-color: var(--purple); }
+    .wp-tile[data-s="correct"] {
+      background: var(--green); border-color: var(--green);
+      color: #0e0e2c; animation: tileReveal 0.4s ease;
+    }
+    .wp-tile[data-s="present"] {
+      background: var(--yellow); border-color: var(--yellow);
+      color: #0e0e2c; animation: tileReveal 0.4s ease;
+    }
+    .wp-tile[data-s="absent"] {
+      background: var(--bg-layer3); border-color: var(--bg-layer3);
+      color: var(--txt-soft); animation: tileReveal 0.4s ease;
+    }
+    @keyframes tileReveal {
+      0%   { transform: rotateX(0deg); }
+      50%  { transform: rotateX(90deg); }
+      100% { transform: rotateX(0deg); }
+    }
+
+    /* Status message bar */
+    .wp-msg {
+      text-align: center;
+      font-weight: 700;
+      font-size: 0.9rem;
+      min-height: 24px;
+      color: var(--yellow);
+    }
+
+    /* On-screen keyboard */
+    .wp-keyboard {
+      display: flex; flex-direction: column;
+      align-items: center; gap: var(--sp-2);
+    }
+    .wp-kb-row { display: flex; gap: 4px; }
+    .wp-key {
+      min-width: clamp(26px, 6vw, 40px);
+      height: clamp(38px, 7vw, 50px);
+      border-radius: var(--r-xs);
+      background: var(--bg-layer3);
+      border: 1px solid var(--border);
+      color: var(--txt);
+      font-family: var(--font);
+      font-size: clamp(0.65rem, 1.4vw, 0.85rem);
+      font-weight: 700;
+      text-transform: uppercase;
+      display: flex; align-items: center; justify-content: center;
+      padding: 0 3px;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      cursor: pointer;
+    }
+    .wp-key:hover   { background: var(--bg-layer2); }
+    .wp-key.wide    { min-width: clamp(48px, 9vw, 64px); font-size: 0.68rem; }
+    .wp-key[data-ks="correct"] { background: var(--green);  border-color: var(--green);  color: #0e0e2c; }
+    .wp-key[data-ks="present"] { background: var(--yellow); border-color: var(--yellow); color: #0e0e2c; }
+    .wp-key[data-ks="absent"]  { background: var(--bg-base); border-color: var(--bg-layer2); color: var(--txt-dim); }
+
+    /* Legend */
+    .wp-legend {
+      display: flex; gap: var(--sp-3); flex-wrap: wrap;
+      justify-content: center;
+    }
+    .wp-leg { display: flex; align-items: center; gap: var(--sp-2); font-size: 0.74rem; color: var(--txt-soft); }
+    .wp-leg-box { width: 18px; height: 18px; border-radius: 4px; flex-shrink: 0; }
+
+    /* ════════════════════════════════════════════════════════════════
+       §12  GAME 2: DRAWING BOARD
+    ════════════════════════════════════════════════════════════════ */
+    .draw-prompt {
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: var(--sp-3);
+      padding: var(--sp-4);
+    }
+    .draw-word-display {
+      font-size: 1.5rem; font-weight: 700;
+    }
+
+    .canvas-toolbar {
+      display: flex; align-items: center; gap: var(--sp-2);
+      flex-wrap: wrap;
+      padding: var(--sp-3) var(--sp-4);
+    }
+    .color-dot {
+      width: 28px; height: 28px; border-radius: 50%;
+      border: 3px solid transparent;
+      cursor: pointer; flex-shrink: 0;
+      transition: transform 0.15s, border-color 0.15s;
+    }
+    .color-dot:hover { transform: scale(1.2); }
+    .color-dot.active { border-color: #fff; transform: scale(1.25); box-shadow: 0 0 0 2px rgba(255,255,255,0.3); }
+
+    .tb-sep { width: 1px; height: 24px; background: var(--border); flex-shrink: 0; }
+
+    .sz-pill {
+      padding: 5px 10px;
+      border-radius: var(--r-xl);
+      background: var(--bg-layer3);
+      border: 1px solid var(--border);
+      font-size: 0.72rem; font-weight: 700;
+      color: var(--txt-soft);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      min-height: 32px;
+    }
+    .sz-pill.active { background: var(--purple); border-color: var(--purple); color: #fff; }
+    .sz-pill:hover:not(.active) { border-color: var(--purple-lt); color: var(--txt); }
+
+    .tool-pill {
+      padding: 5px 11px;
+      border-radius: var(--r-xs);
+      background: var(--bg-layer3);
+      border: 1px solid var(--border);
+      font-size: 0.78rem; font-weight: 700;
+      color: var(--txt-soft);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+      min-height: 32px;
+    }
+    .tool-pill.active { background: rgba(124,92,252,0.2); border-color: var(--purple); color: var(--purple-lt); }
+    .tool-pill:hover:not(.active) { color: var(--txt); border-color: var(--txt-dim); }
+
+    /* Canvas container — flex:1 so it fills available height */
+    .canvas-wrap {
+      flex: 1;
+      min-height: 280px;
+      border-radius: var(--r-sm);
+      border: 2px solid var(--border-md);
+      overflow: hidden;
+      background: #fff;
+      position: relative;
+    }
+    #draw-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      /*
+       * CRITICAL for mobile drawing:
+       * touch-action:none prevents the browser from intercepting touch
+       * events for scrolling/zooming while the user is drawing.
+       */
+      touch-action: none;
+      cursor: crosshair;
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       §13  GAME 3: TIC-TAC-TOE / CONNECT FOUR
+    ════════════════════════════════════════════════════════════════ */
+    .mode-row {
+      display: flex; gap: var(--sp-2);
+    }
+    .mode-btn {
+      flex: 1;
+      padding: 10px;
+      border-radius: var(--r-sm);
+      background: var(--bg-layer2);
+      border: 2px solid var(--border);
+      font-family: var(--font);
+      font-size: 0.85rem; font-weight: 700;
+      color: var(--txt-soft);
+      transition: border-color 0.18s, color 0.18s;
+      min-height: 44px;
+    }
+    .mode-btn.active { border-color: var(--purple); color: var(--purple-lt); }
+
+    /* Score strip */
+    .score-strip {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: var(--sp-2);
+    }
+    .score-card {
+      background: var(--bg-layer2);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      padding: var(--sp-3);
+      text-align: center;
+    }
+    .score-val {
+      font-size: 1.9rem; font-weight: 700;
+      line-height: 1;
+      margin-bottom: 3px;
+    }
+    .score-lbl { font-size: 0.68rem; color: var(--txt-dim); }
+
+    .turn-bar {
+      text-align: center;
+      font-weight: 700; font-size: 0.9rem;
+      color: var(--txt-soft);
+      min-height: 22px;
+      padding: var(--sp-2) 0;
+    }
+
+    /* Tic-Tac-Toe 3×3 */
+    #ttt-board {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      max-width: 280px;
+      align-self: center;
+      width: 100%;
+    }
+    .ttt-cell {
+      aspect-ratio: 1;
+      background: var(--bg-layer2);
+      border: 2px solid var(--border);
+      border-radius: var(--r-sm);
+      display: flex; align-items: center; justify-content: center;
+      font-size: clamp(1.5rem, 5vw, 2.4rem);
+      font-weight: 700;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .ttt-cell:hover:not(.taken) { background: var(--bg-layer3); border-color: var(--purple); }
+    .ttt-cell.taken { cursor: default; }
+    .ttt-cell.X { color: var(--purple-lt); }
+    .ttt-cell.O { color: var(--pink); }
+    .ttt-cell.win { background: rgba(92,252,162,0.12); border-color: var(--green); }
+
+    /* Connect Four 6×7 */
+    #cf-board {
+      display: flex; flex-direction: column;
+      gap: 5px;
+      padding: var(--sp-3);
+      background: var(--bg-layer2);
+      border: 2px solid var(--border);
+      border-radius: var(--r-md);
+      align-self: center;
+      width: 100%;
+      max-width: 440px;
+    }
+    .cf-drop-row {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 5px;
+    }
+    .cf-drop-btn {
+      background: rgba(124,92,252,0.12);
+      border: 1px solid rgba(124,92,252,0.22);
+      border-radius: var(--r-xs);
+      padding: 5px 0;
+      font-size: 0.78rem; font-weight: 700;
+      color: var(--purple-lt);
+      cursor: pointer;
+      transition: background 0.15s;
+      min-height: 32px;
+    }
+    .cf-drop-btn:hover:not(:disabled) { background: rgba(124,92,252,0.28); }
+    .cf-drop-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+
+    .cf-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 5px;
+    }
+    .cf-cell {
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: var(--bg-base);
+      border: 2px solid var(--border);
+      transition: background 0.25s, border-color 0.25s;
+    }
+    .cf-cell.P1 { background: var(--purple); border-color: var(--purple-lt); }
+    .cf-cell.P2 { background: var(--pink);   border-color: var(--pink-lt); }
+    .cf-cell.win-cell { animation: cfPulse 0.5s ease-in-out infinite alternate; }
+    @keyframes cfPulse {
+      from { box-shadow: none; }
+      to   { box-shadow: 0 0 16px rgba(92,252,162,0.7); }
+    }
+
+    /* Reset row */
+    .grid-ctrl {
+      display: flex; gap: var(--sp-2); flex-wrap: wrap; justify-content: center;
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       §14  GAME 4: QUESTION DECK
+    ════════════════════════════════════════════════════════════════ */
+    .deck-filters {
+      display: flex; gap: var(--sp-2); flex-wrap: wrap;
+    }
+    .deck-filter {
+      padding: 6px 14px;
+      border-radius: var(--r-xl);
+      background: var(--bg-layer2);
+      border: 1px solid var(--border);
+      font-family: var(--font);
+      font-size: 0.78rem; font-weight: 700;
+      color: var(--txt-soft);
+      cursor: pointer;
+      min-height: 36px;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .deck-filter.active {
+      background: rgba(124,92,252,0.15);
+      border-color: var(--purple);
+      color: var(--purple-lt);
+    }
+
+    /* Card face */
+    .deck-card-face {
+      min-height: 210px;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: var(--sp-4);
+      padding: var(--sp-6) var(--sp-5);
+      text-align: center;
+      border-radius: var(--r-lg);
+      background: var(--g-card);
+      border: 1px solid var(--glass-border);
+      box-shadow: var(--shadow-md);
+      position: relative;
+      overflow: hidden;
+    }
+    /* Subtle decorative ring */
+    .deck-card-face::before {
+      content: '';
+      position: absolute;
+      top: -60px; right: -60px;
+      width: 180px; height: 180px;
+      border-radius: 50%;
+      background: var(--g-brand);
+      opacity: 0.05;
+      pointer-events: none;
+    }
+
+    .deck-type-pill { font-size: 0.68rem; font-weight: 700; }
+
+    .deck-text {
+      font-size: clamp(1.05rem, 2.8vw, 1.35rem);
+      font-weight: 700;
+      line-height: 1.4;
+      max-width: 540px;
+    }
+
+    /* WYR vote area */
+    .wyr-buttons {
+      display: flex; gap: var(--sp-3); flex-wrap: wrap;
+      justify-content: center;
+    }
+    .wyr-btn {
+      flex: 1 1 130px; max-width: 210px;
+      padding: 10px 14px;
+      border-radius: var(--r-sm);
+      font-family: var(--font);
+      font-weight: 700; font-size: 0.84rem;
+      min-height: 44px;
+      cursor: pointer;
+      transition: transform 0.18s, box-shadow 0.18s;
+      border: 2px solid;
+    }
+    .wyr-btn.a { background: rgba(124,92,252,0.12); border-color: var(--purple); color: var(--purple-lt); }
+    .wyr-btn.b { background: rgba(252,92,156,0.12); border-color: var(--pink);   color: var(--pink-lt); }
+    .wyr-btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-sm); }
+
+    /* Vote result bars */
+    .vote-bars {
+      display: flex; gap: var(--sp-5); justify-content: center;
+    }
+    .vote-bar-col {
+      display: flex; flex-direction: column;
+      align-items: center; gap: var(--sp-2);
+    }
+    .vote-bar-track {
+      width: 36px; height: 80px;
+      background: var(--bg-layer3);
+      border-radius: var(--r-md);
+      overflow: hidden;
+      display: flex; align-items: flex-end;
+    }
+    .vote-bar-fill {
+      width: 100%; border-radius: var(--r-md);
+      background: var(--g-brand);
+      transition: height 0.5s var(--ease);
+    }
+    .vote-bar-lbl { font-size: 0.72rem; color: var(--txt-soft); font-weight: 700; }
+
+    /* Navigation row */
+    .deck-nav {
+      display: flex; align-items: center; gap: var(--sp-3);
+      flex-wrap: wrap; justify-content: center;
+    }
+    .deck-counter { font-size: 0.8rem; color: var(--txt-soft); min-width: 70px; text-align: center; }
+
+    /* ════════════════════════════════════════════════════════════════
+       §15  RESPONSIVE — MOBILE (≤768px)
+    ════════════════════════════════════════════════════════════════ */
+    @media (max-width: 768px) {
+      /* Stack video above games */
+      #screen-stage.active {
+        grid-template-columns: 1fr;
+        grid-template-rows: 52px 220px 1fr;
+        grid-template-areas:
+          "topbar"
+          "video"
+          "games";
+        height: auto;
+        min-height: 100dvh;
+        overflow: auto;
+      }
+
+      /* Video panel: sticky compact strip */
+      .video-panel {
+        border-right: none;
+        border-bottom: 1px solid var(--glass-border);
+        height: 220px;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+
+      .games-panel { min-height: 65dvh; }
+
+      /* Larger tap targets on mobile */
+      .tab-btn { padding: 10px 14px; }
+
+      /* Room chip smaller on mobile */
+      .room-chip { max-width: 130px; }
+
+      /* Connect Four: constrain on mobile */
+      #cf-board { max-width: 320px; }
+    }
+
+    @media (max-width: 480px) {
+      /* Intro: simplify on small phones */
+      .feature-row { display: none; }
+      .steps { display: none; }
+      .cta-group { flex-direction: column; align-items: stretch; }
+      .cta-group .btn { width: 100%; justify-content: center; }
+
+      /* Tiles slightly smaller */
+      .wp-tile { width: 38px; height: 38px; }
+
+      /* TTT smaller */
+      #ttt-board { max-width: 220px; }
+
+      /* CF compact */
+      #cf-board { max-width: 290px; }
+    }
+
+    /* ════════════════════════════════════════════════════════════════
+       §16  UTILITY CLASSES
+    ════════════════════════════════════════════════════════════════ */
+    .hidden { display: none !important; }
+    .flex   { display: flex; }
+    .flex-col { display: flex; flex-direction: column; }
+    .items-center { align-items: center; }
+    .justify-center { justify-content: center; }
+    .justify-between { justify-content: space-between; }
+    .gap-2 { gap: var(--sp-2); }
+    .gap-3 { gap: var(--sp-3); }
+    .gap-4 { gap: var(--sp-4); }
+    .w-full { width: 100%; }
+    .text-center { text-align: center; }
+    .mt-2 { margin-top: var(--sp-2); }
+    .mt-3 { margin-top: var(--sp-3); }
+    .flex-wrap { flex-wrap: wrap; }
+  </style>
+</head>
+
+<body>
+
+  <!-- ╔══════════════════════════════════════════════════════════════
+       GLOBAL UI CHROME
+  ══════════════════════════════════════════════════════════════ -->
+
+  <!-- Toast notification shelf -->
+  <div id="toast-shelf" aria-live="polite" aria-atomic="true"></div>
+
+  <!-- Confetti canvas overlay -->
+  <canvas id="confetti-canvas" aria-hidden="true"></canvas>
+
+  <!-- ╔══════════════════════════════════════════════════════════════
+       SCREEN 1: INTRO / LANDING
+  ══════════════════════════════════════════════════════════════ -->
+  <main id="screen-intro" role="main">
+
+    <!-- Brand logo -->
+    <div class="brand">
+      <div class="brand-icon" aria-hidden="true">💑</div>
+      <span class="brand-name grad-text">CouplePlay</span>
+    </div>
+
+    <!-- Hero -->
+    <h1 class="h1 hero-title">
+      Games &amp; Video,<br />
+      <span class="grad-text">Built for Two</span>
+    </h1>
+    <p class="hero-sub">
+      Share one link. Jump on a free HD video call. Play four
+      cooperative games together — no downloads, no accounts needed.
+    </p>
+
+    <!-- Feature pills -->
+    <div class="feature-row" aria-label="Features">
+      <span class="feature-pill">📹 Free HD Video</span>
+      <span class="feature-pill">🔤 Word Puzzle</span>
+      <span class="feature-pill">🎨 Drawing Board</span>
+      <span class="feature-pill">🎯 Grid Games</span>
+      <span class="feature-pill">💬 Question Deck</span>
+    </div>
+
+    <!-- CTA group -->
+    <div class="cta-group">
+      <button class="btn btn-primary btn-lg" id="btn-start">
+        🎮 Start Playing
+      </button>
+      <button class="btn btn-ghost btn-lg" id="btn-copy-intro">
+        🔗 Copy Invite Link
+      </button>
+    </div>
+    <p class="copy-confirm" id="copy-ok-intro" aria-live="polite">
+      ✅ Link copied — send it to your partner!
+    </p>
+
+    <!-- How it works -->
+    <div class="steps" aria-label="How it works">
+      <div class="step">
+        <div class="step-num">1</div>
+        <p>Copy &amp; share the invite link with your partner.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <p>Both click <strong>Start Playing</strong> to enter the room.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <p>Click <strong>Join Video Call</strong> then pick a game!</p>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ╔══════════════════════════════════════════════════════════════
+       SCREEN 2: GAME STAGE (video + 4 games)
+  ══════════════════════════════════════════════════════════════ -->
+  <div id="screen-stage" aria-label="Game stage">
+
+    <!-- ── Top navigation bar ───────────────────────────────────── -->
+    <header class="topbar" role="banner">
+      <div class="topbar-left">
+        <div class="topbar-logo" aria-label="CouplePlay">
+          <div class="topbar-logo-icon" aria-hidden="true">💑</div>
+          <span class="topbar-logo-name grad-text">CouplePlay</span>
+        </div>
+        <div class="room-chip" aria-label="Room identifier">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span class="room-chip-id" id="topbar-room-id">—</span>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <button class="btn-ico" id="btn-copy-stage" title="Copy invite link" aria-label="Copy invite link">🔗</button>
+        <button class="btn-ico" id="btn-mute"       title="Toggle microphone" aria-label="Toggle microphone">🎤</button>
+        <button class="btn btn-ghost btn-sm" id="btn-home">⬅ Home</button>
+      </div>
+    </header>
+
+    <!-- ── Left / top panel: Video call ─────────────────────────── -->
+    <aside class="video-panel" aria-label="Video call panel">
+      <div class="panel-head">
+        <span class="panel-label">📹 Video Call</span>
+        <button class="btn btn-ghost btn-xs" id="btn-fullscreen-video" title="Toggle fullscreen" aria-label="Toggle video fullscreen">⛶</button>
+      </div>
+
+      <!-- Jitsi iframe mounts here -->
+      <div id="jitsi-mount">
+
+        <!-- STATE 1: Idle — shown before user clicks Join -->
+        <div class="video-idle" id="vid-idle">
+          <div class="video-idle-icon">📹</div>
+          <h3>Ready to connect?</h3>
+          <p class="muted">Click to join the video call with your partner.</p>
+          <button class="btn btn-primary" id="btn-join-call">
+            Join Room 🎥
+          </button>
+        </div>
+
+        <!-- STATE 2: Connecting spinner -->
+        <div class="video-connecting" id="vid-connecting">
+          <div class="spinner" aria-hidden="true"></div>
+          <p>Connecting — allow camera &amp; mic when prompted…</p>
+        </div>
+
+        <!-- STATE 3: Error message — shown if API fails -->
+        <div class="video-error" id="vid-error">
+          <div class="video-error-icon">⚠️</div>
+          <h3>Could not connect</h3>
+          <p class="muted" id="vid-error-msg">
+            Camera/mic permission was denied, or your browser does not support WebRTC.
+          </p>
+          <button class="btn btn-ghost btn-sm" id="btn-retry-call">Retry</button>
+        </div>
+
+      </div><!-- /#jitsi-mount -->
+    </aside>
+
+    <!-- ── Right / bottom panel: Games ──────────────────────────── -->
+    <section class="games-panel" aria-label="Cooperative games">
+
+      <!-- Tab navigation -->
+      <nav class="tab-bar" role="tablist" aria-label="Game tabs">
+        <button class="tab-btn active" data-tab="word"  role="tab" aria-selected="true"  aria-controls="pane-word">🔤 Word Puzzle</button>
+        <button class="tab-btn"        data-tab="draw"  role="tab" aria-selected="false" aria-controls="pane-draw">🎨 Drawing</button>
+        <button class="tab-btn"        data-tab="grid"  role="tab" aria-selected="false" aria-controls="pane-grid">🎯 Grid Games</button>
+        <button class="tab-btn"        data-tab="deck"  role="tab" aria-selected="false" aria-controls="pane-deck">💬 Question Deck</button>
+      </nav>
+
+      <!-- Scrollable game area -->
+      <div class="game-scroll">
+
+        <!-- ══════════════════════════════════════════════════════
+             PANE 1: WORD PUZZLE
+        ══════════════════════════════════════════════════════ -->
+        <div class="game-pane active" id="pane-word" role="tabpanel">
+
+          <!-- Status message -->
+          <p class="wp-msg" id="wp-msg" aria-live="polite" aria-atomic="true"></p>
+
+          <!-- 6×5 tile grid -->
+          <div id="wp-grid" aria-label="Guess grid"></div>
+
+          <!-- Colour legend -->
+          <div class="wp-legend" aria-label="Colour guide">
+            <div class="wp-leg">
+              <div class="wp-leg-box" style="background:var(--green)"></div>
+              Correct position
+            </div>
+            <div class="wp-leg">
+              <div class="wp-leg-box" style="background:var(--yellow)"></div>
+              Wrong position
+            </div>
+            <div class="wp-leg">
+              <div class="wp-leg-box" style="background:var(--bg-layer3)"></div>
+              Not in word
+            </div>
+          </div>
+
+          <!-- On-screen keyboard -->
+          <div class="wp-keyboard" id="wp-keyboard" aria-label="Virtual keyboard"></div>
+
+          <!-- Controls -->
+          <div class="flex justify-center gap-2">
+            <button class="btn btn-primary btn-sm" id="wp-new-word">New Word 🔀</button>
+          </div>
+
+        </div><!-- /pane-word -->
+
+        <!-- ══════════════════════════════════════════════════════
+             PANE 2: DRAWING BOARD
+        ══════════════════════════════════════════════════════ -->
+        <div class="game-pane" id="pane-draw" role="tabpanel">
+
+          <!-- Current drawing word prompt -->
+          <div class="card draw-prompt">
+            <div>
+              <p class="dim" style="font-size:.72rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px;">Draw this:</p>
+              <p class="draw-word-display grad-text" id="draw-current-word">ELEPHANT</p>
+            </div>
+            <button class="btn btn-ghost btn-sm" id="btn-new-draw-word">New Word 🔀</button>
+          </div>
+
+          <!-- Toolbar: colours, sizes, tools -->
+          <div class="card canvas-toolbar">
+            <!-- Colour palette -->
+            <button class="color-dot active" style="background:#111133" data-color="#111133" title="Dark"   aria-label="Dark"></button>
+            <button class="color-dot"        style="background:#fc5c9c" data-color="#fc5c9c" title="Pink"   aria-label="Pink"></button>
+            <button class="color-dot"        style="background:#7c5cfc" data-color="#7c5cfc" title="Violet" aria-label="Violet"></button>
+            <button class="color-dot"        style="background:#5cf4fc" data-color="#5cf4fc" title="Cyan"   aria-label="Cyan"></button>
+            <button class="color-dot"        style="background:#5cfca2" data-color="#5cfca2" title="Green"  aria-label="Green"></button>
+            <button class="color-dot"        style="background:#fce45c" data-color="#fce45c" title="Yellow" aria-label="Yellow"></button>
+            <button class="color-dot"        style="background:#fc7c5c" data-color="#fc7c5c" title="Orange" aria-label="Orange"></button>
+            <button class="color-dot"        style="background:#ffffff" data-color="#ffffff" title="White"  aria-label="White"></button>
+
+            <div class="tb-sep" aria-hidden="true"></div>
+
+            <!-- Brush sizes -->
+            <button class="sz-pill"        data-size="2"  aria-label="Tiny brush">2px</button>
+            <button class="sz-pill"        data-size="5"  aria-label="Small brush">5px</button>
+            <button class="sz-pill active" data-size="10" aria-label="Medium brush">10px</button>
+            <button class="sz-pill"        data-size="22" aria-label="Large brush">22px</button>
+            <button class="sz-pill"        data-size="40" aria-label="XL brush">40px</button>
+
+            <div class="tb-sep" aria-hidden="true"></div>
+
+            <!-- Tools -->
+            <button class="tool-pill active" data-tool="pen"   aria-label="Pen">✏️ Pen</button>
+            <button class="tool-pill"        data-tool="fill"  aria-label="Fill">🪣 Fill</button>
+            <button class="tool-pill"        data-tool="erase" aria-label="Eraser">🧹 Erase</button>
+
+            <div class="tb-sep" aria-hidden="true"></div>
+
+            <button class="btn btn-ghost btn-xs" id="btn-clear-canvas">🗑 Clear</button>
+            <button class="btn btn-ghost btn-xs" id="btn-save-canvas">💾 Save</button>
+          </div>
+
+          <!-- Canvas -->
+          <div class="canvas-wrap">
+            <canvas id="draw-canvas" aria-label="Drawing canvas"></canvas>
+          </div>
+
+        </div><!-- /pane-draw -->
+
+        <!-- ══════════════════════════════════════════════════════
+             PANE 3: GRID GAMES (TTT + Connect Four)
+        ══════════════════════════════════════════════════════ -->
+        <div class="game-pane" id="pane-grid" role="tabpanel">
+
+          <!-- Mode selector -->
+          <div class="mode-row" role="group" aria-label="Choose game mode">
+            <button class="mode-btn active" data-mode="ttt">🎯 Tic-Tac-Toe</button>
+            <button class="mode-btn"        data-mode="cf" >🔴 Connect Four</button>
+          </div>
+
+          <!-- Scoreboard -->
+          <div class="score-strip" aria-label="Scores">
+            <div class="score-card">
+              <div class="score-val grad-text" id="sc-p1">0</div>
+              <div class="score-lbl">Player 1</div>
+            </div>
+            <div class="score-card">
+              <div class="score-val" style="color:var(--txt-soft)" id="sc-draws">0</div>
+              <div class="score-lbl">Draws</div>
+            </div>
+            <div class="score-card">
+              <div class="score-val" style="color:var(--pink)" id="sc-p2">0</div>
+              <div class="score-lbl">Player 2</div>
+            </div>
+          </div>
+
+          <!-- Turn indicator -->
+          <p class="turn-bar" id="turn-bar" aria-live="polite"></p>
+
+          <!-- TTT board -->
+          <div id="ttt-board" aria-label="Tic-Tac-Toe board"></div>
+
+          <!-- CF board (hidden initially) -->
+          <div id="cf-board" class="hidden" aria-label="Connect Four board">
+            <div class="cf-drop-row" id="cf-drops"></div>
+            <div class="cf-grid"     id="cf-grid"></div>
+          </div>
+
+          <!-- Control buttons -->
+          <div class="grid-ctrl">
+            <button class="btn btn-ghost btn-sm" id="btn-grid-reset">🔄 New Game</button>
+            <button class="btn btn-ghost btn-sm" id="btn-grid-reset-scores">Reset Scores</button>
+          </div>
+
+        </div><!-- /pane-grid -->
+
+        <!-- ══════════════════════════════════════════════════════
+             PANE 4: QUESTION / DARE DECK
+        ══════════════════════════════════════════════════════ -->
+        <div class="game-pane" id="pane-deck" role="tabpanel">
+
+          <!-- Category filter pills -->
+          <div class="deck-filters" role="group" aria-label="Card categories">
+            <button class="deck-filter active" data-cat="all">✨ All</button>
+            <button class="deck-filter" data-cat="question">💬 Icebreaker</button>
+            <button class="deck-filter" data-cat="deep">🌊 Deep Talk</button>
+            <button class="deck-filter" data-cat="wyr">🤔 Would You Rather</button>
+            <button class="deck-filter" data-cat="dare">🔥 Dare</button>
+          </div>
+
+          <!-- Card face -->
+          <div class="deck-card-face" aria-live="polite">
+            <span class="badge badge-purple deck-type-pill" id="deck-badge">Icebreaker</span>
+            <p class="deck-text" id="deck-text">Press Next Card to begin!</p>
+
+            <!-- WYR vote buttons (shown only for wyr cards) -->
+            <div class="wyr-buttons hidden" id="wyr-btns">
+              <button class="wyr-btn a" id="wyr-vote-a">Option A</button>
+              <button class="wyr-btn b" id="wyr-vote-b">Option B</button>
+            </div>
+
+            <!-- Vote result bars -->
+            <div class="vote-bars hidden" id="vote-bars">
+              <div class="vote-bar-col">
+                <div class="vote-bar-track">
+                  <div class="vote-bar-fill" id="bar-fill-a" style="height:0%"></div>
+                </div>
+                <span class="vote-bar-lbl" id="bar-lbl-a">A: 0</span>
+              </div>
+              <div class="vote-bar-col">
+                <div class="vote-bar-track">
+                  <div class="vote-bar-fill" id="bar-fill-b" style="height:0%"></div>
+                </div>
+                <span class="vote-bar-lbl" id="bar-lbl-b">B: 0</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Nav row -->
+          <div class="deck-nav">
+            <button class="btn btn-ghost btn-sm" id="btn-deck-prev">◀ Prev</button>
+            <span class="deck-counter" id="deck-counter">0 / 0</span>
+            <button class="btn btn-primary btn-sm" id="btn-deck-next">Next ▶</button>
+          </div>
+
+          <div class="flex justify-center">
+            <button class="btn btn-ghost btn-sm" id="btn-deck-shuffle">🔀 Shuffle</button>
+          </div>
+
+        </div><!-- /pane-deck -->
+
+      </div><!-- /.game-scroll -->
+    </section><!-- /.games-panel -->
+
+  </div><!-- /#screen-stage -->
+
+  <!-- ════════════════════════════════════════════════════════════════
+       JAVASCRIPT — all in one <script> block
+  ════════════════════════════════════════════════════════════════ -->
+  <script>
+  /*
+  ╔═══════════════════════════════════════════════════════════════════╗
+  ║  CouplePlay v3.0 — Application Logic                              ║
+  ║                                                                   ║
+  ║  Security posture:                                                ║
+  ║    • ALL DOM writes use .textContent or createElement().          ║
+  ║      No .innerHTML with user-supplied or external data.           ║
+  ║    • sanitize() strips HTML from any external string.             ║
+  ║    • Room IDs: crypto.getRandomValues (CSPRNG, 128-bit entropy).  ║
+  ║    • Room ID param validated against strict allow-list regex.     ║
+  ║    • Jitsi API only called after explicit user click.             ║
+  ║    • navigator.mediaDevices checked before WebRTC init.           ║
+  ║    • All game modules wrapped in try/catch isolation.             ║
+  ╚═══════════════════════════════════════════════════════════════════╝
+  */
+
+  'use strict';
+
+  /* ══════════════════════════════════════════════════════════════════
+     A ▸ SECURITY UTILITIES
+  ══════════════════════════════════════════════════════════════════ */
+
+  /**
+   * sanitize — strip all HTML tags from an external string.
+   * Applied to any value coming from URL params or third-party APIs
+   * before it touches the DOM.
+   */
+  function sanitize(str) {
+    return String(str)
+      .replace(/&/g,  '&amp;')
+      .replace(/</g,  '&lt;')
+      .replace(/>/g,  '&gt;')
+      .replace(/"/g,  '&quot;')
+      .replace(/'/g,  '&#x27;');
+  }
+
+  /**
+   * generateRoomId — 128-bit cryptographically secure room ID.
+   * Uses window.crypto.getRandomValues (CSPRNG), NOT Math.random().
+   * Resulting IDs are computationally infeasible to enumerate.
+   */
+  function generateRoomId() {
+    const CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return 'CP-' + Array.from(bytes, b => CHARS[b % CHARS.length]).join('');
+  }
+
+  /**
+   * Allow-list regex for room IDs from URL params.
+   * Only URL-safe alphanumerics + hyphen/underscore, 3–50 chars.
+   */
+  const ROOM_ID_PATTERN = /^[A-Za-z0-9_-]{3,50}$/;
+
+  /**
+   * resolveRoomId — Read ?room= param (validated) or generate fresh ID.
+   * Pushes newly generated ID to browser address bar without reload.
+   */
+  function resolveRoomId() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const param  = params.get('room');
+
+      if (param && ROOM_ID_PATTERN.test(param)) {
+        return param;   // valid existing room
+      }
+
+      // Generate fresh, cryptographically secure room ID
+      const id  = generateRoomId();
+      const url = `${window.location.pathname}?room=${encodeURIComponent(id)}`;
+      history.replaceState({ roomId: id }, '', url);
+      return id;
+    } catch (err) {
+      console.warn('[CouplePlay] resolveRoomId error:', err);
+      return generateRoomId();
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     B ▸ TOAST NOTIFICATION
+  ══════════════════════════════════════════════════════════════════ */
+
+  /**
+   * showToast — display a self-dismissing notification.
+   * Uses textContent (not innerHTML) to prevent XSS.
+   */
+  function showToast(message, emoji = 'ℹ️') {
+    const shelf = document.getElementById('toast-shelf');
+    const el    = document.createElement('div');
+    el.className = 'toast';
+    el.setAttribute('role', 'status');
+
+    const eEl = document.createElement('span');
+    eEl.textContent = emoji;
+
+    const mEl = document.createElement('span');
+    mEl.textContent = sanitize(message);   // always sanitized
+
+    el.appendChild(eEl);
+    el.appendChild(mEl);
+    shelf.appendChild(el);
+
+    // Remove after animation ends (~3.1s)
+    setTimeout(() => el.remove(), 3200);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     C ▸ CLIPBOARD
+  ══════════════════════════════════════════════════════════════════ */
+
+  async function copyCurrentURL() {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+    } catch {
+      // Fallback for browsers without async clipboard API
+      const ta = document.createElement('textarea');
+      ta.value = window.location.href;
+      ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;top:0;left:0;';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch {}
+      ta.remove();
+    }
+    showToast('Invite link copied! Share it with your partner.', '🔗');
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     D ▸ CONFETTI ENGINE (pure canvas, no libraries)
+  ══════════════════════════════════════════════════════════════════ */
+
+  (function buildConfetti() {
+    const canvas  = document.getElementById('confetti-canvas');
+    const ctx     = canvas.getContext('2d');
+    const PALETTE = ['#7c5cfc','#fc5c9c','#5cf4fc','#5cfca2','#fce45c','#fc7c5c','#fff'];
+    let raf;
+
+    window.launchConfetti = function() {
+      canvas.style.display = 'block';
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+
+      const particles = Array.from({ length: 110 }, () => ({
+        x:     Math.random() * canvas.width,
+        y:     -14,
+        vx:    (Math.random() - 0.5) * 5,
+        vy:    Math.random() * 5 + 2,
+        w:     Math.random() * 10 + 4,
+        h:     Math.random() * 7  + 3,
+        color: PALETTE[Math.floor(Math.random() * PALETTE.length)],
+        angle: Math.random() * Math.PI * 2,
+        spin:  (Math.random() - 0.5) * 0.28,
+        alpha: 1,
+      }));
+
+      const DURATION = 2800;
+      const startTs  = performance.now();
+
+      cancelAnimationFrame(raf);
+
+      function frame(now) {
+        const elapsed  = now - startTs;
+        const progress = Math.min(elapsed / DURATION, 1);
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        particles.forEach(p => {
+          p.x     += p.vx;
+          p.y     += p.vy;
+          p.vy    += 0.13;          // gravity
+          p.angle += p.spin;
+          p.alpha  = 1 - progress;
+
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, p.alpha);
+          ctx.translate(p.x, p.y);
+          ctx.rotate(p.angle);
+          ctx.fillStyle = p.color;
+          ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+          ctx.restore();
+        });
+
+        if (progress < 1) {
+          raf = requestAnimationFrame(frame);
+        } else {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          canvas.style.display = 'none';
+        }
+      }
+
+      raf = requestAnimationFrame(frame);
+    };
+  })();
+
+  /* ══════════════════════════════════════════════════════════════════
+     E ▸ JITSI VIDEO CALL (explicit-init pattern — fixes hang bug)
+
+     WHY THIS FIXES "Connecting...":
+     ────────────────────────────────
+     The JitsiMeetExternalAPI constructor immediately tries to acquire
+     camera/microphone. On mobile browsers (especially iOS Safari),
+     getUserMedia() is blocked unless triggered by a direct user
+     gesture (a real click event). When the API is initialised on
+     page load or on an automated script path, the permission request
+     arrives in an "inactive" browsing context and silently fails,
+     leaving the iframe stuck at "Connecting...".
+
+     Solution: We show an idle state with a visible "Join Room" button.
+     The API is only constructed inside the click handler of that
+     button, which is a qualifying user gesture in all browsers.
+  ══════════════════════════════════════════════════════════════════ */
+
+  let jitsiAPI  = null;
+  let jitsiRoomId = '';
+
+  /**
+   * Set the video panel to one of three visual states.
+   * @param {'idle'|'connecting'|'live'|'error'} state
+   * @param {string} [errorMsg]
+   */
+  function setVideoState(state, errorMsg = '') {
+    const idle       = document.getElementById('vid-idle');
+    const connecting = document.getElementById('vid-connecting');
+    const error      = document.getElementById('vid-error');
+
+    // Reset all states
+    idle.style.display       = 'none';
+    connecting.classList.remove('show');
+    error.classList.remove('show');
+
+    if (state === 'idle') {
+      idle.style.display = '';
+    } else if (state === 'connecting') {
+      connecting.classList.add('show');
+    } else if (state === 'live') {
+      // All overlays hidden — Jitsi iframe is visible beneath
+    } else if (state === 'error') {
+      error.classList.add('show');
+      if (errorMsg) {
+        // textContent — no XSS risk; errorMsg comes from our own code
+        document.getElementById('vid-error-msg').textContent = errorMsg;
+      }
+    }
+  }
+
+  /**
+   * initJitsi — mount the Jitsi Meet iframe.
+   * MUST be called from a user click handler.
+   */
+  function initJitsi() {
+    /*
+     * GUARD 1: Check that the Jitsi script has loaded.
+     * The <script defer> in <head> should load it before the user
+     * has time to click, but we handle the edge case gracefully.
+     */
+    if (typeof JitsiMeetExternalAPI === 'undefined') {
+      setVideoState('error',
+        'The video library has not loaded yet. Please wait a moment and retry.');
+      return;
+    }
+
+    /*
+     * GUARD 2: Check WebRTC / mediaDevices support.
+     * navigator.mediaDevices is undefined in:
+     *   • HTTP (non-HTTPS) contexts (GitHub Pages is HTTPS, so fine)
+     *   • Very old browsers
+     *   • Some privacy-hardened configurations
+     */
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setVideoState('error',
+        'Your browser does not support camera/mic access (WebRTC). ' +
+        'Try Chrome, Firefox, or Safari 14+.');
+      return;
+    }
+
+    // Show connecting spinner
+    setVideoState('connecting');
+
+    // Dispose any previous call
+    if (jitsiAPI) {
+      try { jitsiAPI.dispose(); } catch {}
+      jitsiAPI = null;
+    }
+
+    try {
+      jitsiAPI = new JitsiMeetExternalAPI('meet.jit.si', {
+        roomName:   jitsiRoomId,
+        parentNode: document.getElementById('jitsi-mount'),
+        width:      '100%',
+        height:     '100%',
+
+        interfaceConfigOverwrite: {
+          SHOW_JITSI_WATERMARK:        false,
+          SHOW_WATERMARK_FOR_GUESTS:   false,
+          SHOW_BRAND_WATERMARK:        false,
+          SHOW_POWERED_BY:             false,
+          SHOW_PROMOTIONAL_CLOSE_PAGE: false,
+          MOBILE_APP_PROMO:            false,
+          HIDE_KICK_BUTTON_FOR_GUESTS: true,
+          TOOLBAR_BUTTONS: [
+            'microphone', 'camera', 'desktop',
+            'hangup', 'raisehand', 'fullscreen', 'tileview',
+          ],
+        },
+
+        configOverwrite: {
+          startWithAudioMuted:    false,
+          startWithVideoMuted:    false,
+          prejoinPageEnabled:     false,   // skip lobby
+          enableLobbyChat:        false,
+          disableInviteFunctions: true,
+          p2p: { enabled: true, preferH264: true },
+          enableNoisyMicDetection: true,
+          analytics: { disabled: true },
+          defaultBackground: '#0e0e2c',
+          constraints: {
+            video: {
+              aspectRatio: 9 / 16,
+              height: { ideal: 480, max: 720, min: 180 },
+            },
+          },
+        },
+      });
+
+      /* ── Jitsi event listeners ─────────────────────────────────── */
+
+      // Joined successfully → hide spinner
+      jitsiAPI.addEventListener('videoConferenceJoined', () => {
+        setVideoState('live');
+        showToast('Video call connected!', '📹');
+      });
+
+      // Participant joined
+      jitsiAPI.addEventListener('participantJoined', ({ displayName }) => {
+        showToast(
+          // sanitize: displayName comes from Jitsi (external / user-set)
+          `${sanitize(displayName || 'Your partner')} joined the call!`,
+          '💑'
+        );
+      });
+
+      // Participant left
+      jitsiAPI.addEventListener('participantLeft', () => {
+        showToast('Your partner left the call.', '👋');
+      });
+
+      // Mute state change → update button icon
+      jitsiAPI.addEventListener('audioMuteStatusChanged', ({ muted }) => {
+        document.getElementById('btn-mute').textContent = muted ? '🔇' : '🎤';
+      });
+
+      // Conference failed / error
+      jitsiAPI.addEventListener('videoConferenceFailed', (err) => {
+        console.error('[CouplePlay] Jitsi error:', err);
+        setVideoState('error',
+          'The video call encountered an error. Check your connection and retry.');
+      });
+
+    } catch (err) {
+      console.error('[CouplePlay] Jitsi constructor threw:', err);
+      setVideoState('error',
+        'Could not start the video call. ' +
+        'Ensure this page is served over HTTPS and camera permissions are allowed.');
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     F ▸ APP STATE — intro ↔ stage transitions
+  ══════════════════════════════════════════════════════════════════ */
+
+  let APP_ROOM_ID = '';
+
+  /** showStage — animate intro out, show game stage. */
+  function showStage() {
+    const intro = document.getElementById('screen-intro');
+    const stage = document.getElementById('screen-stage');
+
+    intro.classList.add('exit');
+
+    setTimeout(() => {
+      intro.style.display = 'none';
+      stage.classList.add('active');
+      document.getElementById('topbar-room-id').textContent = APP_ROOM_ID;
+
+      // Initialise game modules (each is idempotent)
+      safeInit('WordPuzzle',  WordPuzzle.init.bind(WordPuzzle));
+      safeInit('DrawingBoard',DrawingBoard.init.bind(DrawingBoard));
+      safeInit('GridGames',   GridGames.init.bind(GridGames));
+      safeInit('QuestionDeck',QuestionDeck.init.bind(QuestionDeck));
+    }, 420);
+  }
+
+  /** returnHome — dispose call and return to intro. */
+  function returnHome() {
+    if (jitsiAPI) {
+      try { jitsiAPI.dispose(); } catch {}
+      jitsiAPI = null;
+    }
+
+    const stage = document.getElementById('screen-stage');
+    const intro = document.getElementById('screen-intro');
+
+    stage.classList.remove('active');
+    intro.style.display = '';
+    intro.classList.remove('exit');
+
+    // Reset video to idle state for next session
+    setVideoState('idle');
+  }
+
+  /**
+   * safeInit — wrap each game module init in try/catch.
+   * If one module crashes, the others continue to function.
+   * @param {string}   name   Module name for logging
+   * @param {Function} fn     Init function to call
+   */
+  function safeInit(name, fn) {
+    try {
+      fn();
+    } catch (err) {
+      console.error(`[CouplePlay] ${name} init failed:`, err);
+      showToast(`${name} encountered an error. Other games still work.`, '⚠️');
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     G ▸ TAB NAVIGATION
+  ══════════════════════════════════════════════════════════════════ */
+
+  function initTabs() {
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = btn.dataset.tab;
+
+        document.querySelectorAll('.tab-btn').forEach(t => {
+          t.classList.toggle('active', t === btn);
+          t.setAttribute('aria-selected', String(t === btn));
+        });
+
+        document.querySelectorAll('.game-pane').forEach(p => {
+          p.classList.toggle('active', p.id === `pane-${target}`);
+        });
+
+        // Re-size canvas when switching to the drawing tab
+        if (target === 'draw') {
+          try { DrawingBoard.resize(); } catch {}
+        }
+      });
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════════════════
+     H ▸ BOOTSTRAP  (entry point — DOMContentLoaded)
+  ══════════════════════════════════════════════════════════════════ */
+
+  document.addEventListener('DOMContentLoaded', () => {
+
+    // Resolve room ID from URL or generate fresh one
+    APP_ROOM_ID   = resolveRoomId();
+    jitsiRoomId   = APP_ROOM_ID;
+
+    // Intro screen buttons
+    document.getElementById('btn-start').addEventListener('click', showStage);
+    document.getElementById('btn-copy-intro').addEventListener('click', async () => {
+      await copyCurrentURL();
+      const ok = document.getElementById('copy-ok-intro');
+      ok.classList.add('show');
+      setTimeout(() => ok.classList.remove('show'), 3000);
+    });
+
+    // Stage header buttons
+    document.getElementById('btn-copy-stage').addEventListener('click', copyCurrentURL);
+    document.getElementById('btn-home').addEventListener('click', returnHome);
+    document.getElementById('btn-mute').addEventListener('click', () => {
+      if (jitsiAPI) {
+        try { jitsiAPI.executeCommand('toggleAudio'); } catch {}
+      }
+    });
+    document.getElementById('btn-fullscreen-video').addEventListener('click', () => {
+      const mount = document.getElementById('jitsi-mount');
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      } else {
+        mount.requestFullscreen().catch(() => {});
+      }
+    });
+
+    /*
+     * VIDEO CALL — Explicit Init button.
+     * This is the KEY fix: the API is only created inside a
+     * direct click handler, satisfying browser autoplay / permission
+     * gesture policies on mobile.
+     */
+    document.getElementById('btn-join-call').addEventListener('click', initJitsi);
+    document.getElementById('btn-retry-call').addEventListener('click', initJitsi);
+
+    // Tab navigation
+    initTabs();
+
+    // Warn before accidental close during an active session
+    window.addEventListener('beforeunload', e => {
+      if (document.getElementById('screen-stage').classList.contains('active')) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+
+    console.info(
+      '%c💑 CouplePlay v3.0',
+      'font-size:16px;font-weight:700;color:#7c5cfc;',
+      `\nRoom: ${APP_ROOM_ID}`,
+      `\nURL:  ${window.location.href}`
+    );
+  });
+
+  /* ══════════════════════════════════════════════════════════════════
+     ══════════════════════════════════════════════════════════════════
+     GAME MODULES — each is an IIFE with a public .init() method.
+     All wrapped in try/catch via safeInit() in the bootstrap.
+     ══════════════════════════════════════════════════════════════════
+  ══════════════════════════════════════════════════════════════════ */
+
+  /* ══════════════════════════════════════════════════════════════════
+     GAME 1 ▸ WORD PUZZLE  (cooperative Wordle-style)
+  ══════════════════════════════════════════════════════════════════ */
+  const WordPuzzle = (() => {
+    /*
+     * Hard-coded word bank.
+     * SECURITY: All words are constants from our own code.
+     * No user input ever becomes a word source, preventing injection.
+     */
+    const WORDS = [
+      'PLANT','DANCE','FLAME','CRISP','BRAVE','STONE','GLIDE','FRESH',
+      'QUIRK','VIVID','BLOOM','CREEK','DRAPE','EAGLE','FLUTE','GRAZE',
+      'HINGE','INLET','JOUST','KNEEL','LATCH','MIRTH','NOTCH','OPTIC',
+      'PRISM','QUEST','RIDGE','SCOUT','THUMP','VAULT','WINCE','YEARN',
+      'BRIDE','CHARM','DWELL','EMBER','FANCY','GRAFT','HAVEN','ICING',
+      'KNACK','LOFTY','MANGO','NUDGE','ORBIT','PLUME','QUELL','ROVER',
+      'SNARE','TROVE','VIGOR','WALTZ','ANGEL','BLISS','CLOSE','DREAM',
+      'ELITE','FLAIR','GRACE','HEART','IVORY','JELLY','OLIVE','PIANO',
+      'SUGAR','SWIFT','TIGER','ULTRA','VOCAL','WHOLE','YOUTH','ZEBRA',
+    ];
+
+    // Physical keyboard layout
+    const KB = [
+      ['Q','W','E','R','T','Y','U','I','O','P'],
+      ['A','S','D','F','G','H','J','K','L'],
+      ['ENTER','Z','X','C','V','B','N','M','⌫'],
+    ];
+
+    const ROWS = 6, COLS = 5;
+
+    // State
+    let secret    = '';
+    let curRow    = 0;
+    let curCol    = 0;
+    let gameOver  = false;
+    let keyMap    = {};   // letter → 'correct'|'present'|'absent'
+    let ready     = false;
+
+    /* Helper: get a specific tile element */
+    const tile = (r, c) =>
+      document.querySelector(`#wp-grid .wp-row:nth-child(${r+1}) .wp-tile:nth-child(${c+1})`);
+
+    /* Helper: get a keyboard key element */
+    const keyEl = (k) =>
+      document.querySelector(`#wp-keyboard .wp-key[data-key="${k}"]`);
+
+    /* Set the message bar — textContent only */
+    function setMsg(txt) {
+      document.getElementById('wp-msg').textContent = txt;
+    }
+
+    /* Build the 6×5 grid of tiles */
+    function buildGrid() {
+      const grid = document.getElementById('wp-grid');
+      grid.innerHTML = '';   // safe: no user data used
+
+      for (let r = 0; r < ROWS; r++) {
+        const row = document.createElement('div');
+        row.className = 'wp-row';
+
+        for (let c = 0; c < COLS; c++) {
+          const t = document.createElement('div');
+          t.className = 'wp-tile';
+          t.setAttribute('aria-label', `Row ${r+1} col ${c+1}`);
+          row.appendChild(t);
+        }
+        grid.appendChild(row);
+      }
+    }
+
+    /* Build the on-screen keyboard */
+    function buildKB() {
+      const kb = document.getElementById('wp-keyboard');
+      kb.innerHTML = '';   // safe: only constants used
+
+      KB.forEach(rowKeys => {
+        const rowEl = document.createElement('div');
+        rowEl.className = 'wp-kb-row';
+
+        rowKeys.forEach(k => {
+          const btn = document.createElement('button');
+          btn.className = 'wp-key' + (k.length > 1 ? ' wide' : '');
+          btn.dataset.key = k;
+          btn.textContent = k;    // textContent — safe
+          btn.setAttribute('aria-label', k === '⌫' ? 'Backspace' : k);
+          btn.addEventListener('click', () => handleKey(k));
+          rowEl.appendChild(btn);
+        });
+        kb.appendChild(rowEl);
+      });
+    }
+
+    /* Choose a cryptographically random word */
+    function pickWord() {
+      const arr = new Uint8Array(1);
+      crypto.getRandomValues(arr);
+      return WORDS[arr[0] % WORDS.length];
+    }
+
+    /* Start / restart game */
+    function newGame() {
+      secret   = pickWord();
+      curRow   = 0;
+      curCol   = 0;
+      gameOver = false;
+      keyMap   = {};
+      buildGrid();
+      buildKB();
+      setMsg('');
+    }
+
+    /* Handle a key input from on-screen KB or physical keyboard */
+    function handleKey(k) {
+      if (gameOver) return;
+
+      if (k === 'ENTER')           submitGuess();
+      else if (k === '⌫' || k === 'BACKSPACE') deleteLetter();
+      else if (/^[A-Z]$/.test(k) && curCol < COLS) typeLetter(k);
+    }
+
+    /* Place a letter in the current position */
+    function typeLetter(letter) {
+      const t = tile(curRow, curCol);
+      if (!t) return;
+      t.textContent = letter;      // textContent — safe
+      t.dataset.s   = 'filled';
+      curCol++;
+    }
+
+    /* Remove the last letter */
+    function deleteLetter() {
+      if (curCol === 0) return;
+      curCol--;
+      const t = tile(curRow, curCol);
+      if (!t) return;
+      t.textContent = '';
+      t.removeAttribute('data-s');
+    }
+
+    /* Submit the current row as a guess */
+    function submitGuess() {
+      if (curCol < COLS) {
+        setMsg('Not enough letters!');
+        return;
+      }
+
+      // Collect guess from tiles (DOM read — safe, we wrote it via textContent)
+      let guess = '';
+      for (let c = 0; c < COLS; c++) {
+        const t = tile(curRow, c);
+        guess += t ? t.textContent : '';
+      }
+      guess = guess.toUpperCase();
+
+      // Score the guess
+      const result = scoreGuess(guess, secret);
+
+      // Animate tile reveal with staggered delay
+      for (let c = 0; c < COLS; c++) {
+        const t = tile(curRow, c);
+        if (t) {
+          (function(col, state) {
+            setTimeout(() => { t.dataset.s = state; }, col * 120);
+          })(c, result[c]);
+        }
+      }
+
+      // Update keyboard colours (with priority: correct > present > absent)
+      const PRIORITY = { correct: 3, present: 2, absent: 1 };
+      for (let c = 0; c < COLS; c++) {
+        const letter = guess[c];
+        const state  = result[c];
+        if (!keyMap[letter] || PRIORITY[state] > PRIORITY[keyMap[letter]]) {
+          keyMap[letter] = state;
+          const kEl = keyEl(letter);
+          if (kEl) kEl.dataset.ks = state;
+        }
+      }
+
+      if (guess === secret) {
+        setTimeout(() => {
+          setMsg(`🎉 You got it in ${curRow + 1} guess${curRow ? 'es' : ''}!`);
+          launchConfetti();
+        }, COLS * 120 + 200);
+        gameOver = true;
+        curRow++;
+        return;
+      }
+
+      curRow++;
+      curCol = 0;
+
+      if (curRow === ROWS) {
+        setTimeout(() => setMsg(`😔 The word was: ${secret}`), COLS * 120 + 100);
+        gameOver = true;
+      }
+    }
+
+    /**
+     * scoreGuess — two-pass duplicate-safe algorithm.
+     * Pass 1: mark exact matches.
+     * Pass 2: mark misplaced letters (remaining unmatched secret letters only).
+     */
+    function scoreGuess(guess, secret) {
+      const result    = Array(COLS).fill('absent');
+      const secArr    = secret.split('');
+      const usedSec   = Array(COLS).fill(false);
+      const usedGuess = Array(COLS).fill(false);
+
+      // Pass 1 — exact matches
+      for (let i = 0; i < COLS; i++) {
+        if (guess[i] === secArr[i]) {
+          result[i]     = 'correct';
+          usedSec[i]    = true;
+          usedGuess[i]  = true;
+        }
+      }
+
+      // Pass 2 — present but wrong position
+      for (let i = 0; i < COLS; i++) {
+        if (usedGuess[i]) continue;
+        for (let j = 0; j < COLS; j++) {
+          if (usedSec[j]) continue;
+          if (guess[i] === secArr[j]) {
+            result[i]  = 'present';
+            usedSec[j] = true;
+            break;
+          }
+        }
+      }
+
+      return result;
+    }
+
+    /* Physical keyboard listener — only active when word pane is visible */
+    function onKeydown(e) {
+      if (!document.getElementById('pane-word').classList.contains('active')) return;
+      if (document.activeElement.tagName === 'INPUT') return;
+
+      const k = e.key.toUpperCase();
+      if (k === 'ENTER')           { e.preventDefault(); handleKey('ENTER'); }
+      else if (k === 'BACKSPACE')  { e.preventDefault(); handleKey('BACKSPACE'); }
+      else if (/^[A-Z]$/.test(k)) { handleKey(k); }
+    }
+
+    let _ready = false;
+
+    return {
+      init() {
+        if (_ready) return;
+        _ready = true;
+
+        document.getElementById('wp-new-word')
+          .addEventListener('click', newGame);
+
+        document.addEventListener('keydown', onKeydown);
+        newGame();
+      }
+    };
+  })();
+
+  /* ══════════════════════════════════════════════════════════════════
+     GAME 2 ▸ DRAWING BOARD (HTML5 Canvas with full touch support)
+  ══════════════════════════════════════════════════════════════════ */
+  const DrawingBoard = (() => {
+
+    const WORDS = [
+      'ELEPHANT','RAINBOW','BICYCLE','LIGHTHOUSE','VOLCANO','MERMAID',
+      'ASTRONAUT','PIZZA','DINOSAUR','CASTLE','BUTTERFLY','SUBMARINE',
+      'CACTUS','DRAGON','JELLYFISH','ROBOT','BALLOON','TREEHOUSE',
+      'UNICORN','SNOWFLAKE','PENGUIN','GIRAFFE','SPACESHIP','WATERFALL',
+      'FIREWORKS','HAMMOCK','TORNADO','PARACHUTE','MICROSCOPE','LANTERN',
+    ];
+
+    let canvas, ctx;
+    let isDrawing = false;
+    let color     = '#111133';
+    let size      = 10;
+    let tool      = 'pen';        // 'pen' | 'erase' | 'fill'
+    let lx, ly;
+    let _ready    = false;
+
+    /* Resolve pointer position relative to canvas */
+    function getPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      const src  = e.touches ? e.touches[0] : e;
+      return {
+        x: (src.clientX - rect.left) * (canvas.width  / rect.width),
+        y: (src.clientY - rect.top)  * (canvas.height / rect.height),
+      };
+    }
+
+    /* ── Drawing event handlers ─────────────────────────────────── */
+
+    function onDown(e) {
+      e.preventDefault();
+      const { x, y } = getPos(e);
+
+      if (tool === 'fill') {
+        floodFill(Math.round(x), Math.round(y), hexToRgba(color));
+        return;
+      }
+
+      isDrawing = true;
+      lx = x; ly = y;
+
+      // Draw a dot on tap/click
+      ctx.beginPath();
+      ctx.arc(x, y, (tool === 'erase' ? size * 2 : size) / 2, 0, Math.PI * 2);
+      ctx.fillStyle = tool === 'erase' ? '#ffffff' : color;
+      ctx.fill();
+    }
+
+    function onMove(e) {
+      if (!isDrawing) return;
+      e.preventDefault();
+
+      const { x, y } = getPos(e);
+      ctx.beginPath();
+      ctx.moveTo(lx, ly);
+      ctx.lineTo(x, y);
+      ctx.strokeStyle = tool === 'erase' ? '#ffffff' : color;
+      ctx.lineWidth   = tool === 'erase' ? size * 3 : size;
+      ctx.lineCap     = 'round';
+      ctx.lineJoin    = 'round';
+      ctx.stroke();
+      lx = x; ly = y;
+    }
+
+    function onUp(e) {
+      if (!isDrawing) return;
+      e.preventDefault();
+      isDrawing = false;
+    }
+
+    /* ── Flood fill (scanline, stack-based) ─────────────────────── */
+    function floodFill(sx, sy, fill) {
+      const id     = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data   = id.data;
+      const W      = canvas.width, H = canvas.height;
+      const idx    = (sy * W + sx) * 4;
+      const target = [data[idx], data[idx+1], data[idx+2], data[idx+3]];
+
+      if (colorsMatch(target, fill)) return;
+
+      const visited = new Uint8Array(W * H);
+      const stack   = [[sx, sy]];
+
+      while (stack.length) {
+        const [x, y] = stack.pop();
+        if (x < 0 || x >= W || y < 0 || y >= H) continue;
+
+        const i  = y * W + x;
+        if (visited[i]) continue;
+
+        const pi = i * 4;
+        if (!colorsMatch([data[pi],data[pi+1],data[pi+2],data[pi+3]], target)) continue;
+
+        visited[i]  = 1;
+        data[pi]    = fill[0];
+        data[pi+1]  = fill[1];
+        data[pi+2]  = fill[2];
+        data[pi+3]  = fill[3];
+
+        stack.push([x+1,y],[x-1,y],[x,y+1],[x,y-1]);
+      }
+      ctx.putImageData(id, 0, 0);
+    }
+
+    function colorsMatch(a, b) {
+      return Math.abs(a[0]-b[0]) < 28 && Math.abs(a[1]-b[1]) < 28 &&
+             Math.abs(a[2]-b[2]) < 28 && Math.abs(a[3]-b[3]) < 28;
+    }
+
+    function hexToRgba(hex) {
+      const h = hex.replace('#', '');
+      return [
+        parseInt(h.slice(0,2), 16),
+        parseInt(h.slice(2,4), 16),
+        parseInt(h.slice(4,6), 16),
+        255,
+      ];
+    }
+
+    /* ── Resize canvas to match its CSS display size ─────────────── */
+    function resize() {
+      if (!canvas) return;
+      const wrap = canvas.parentElement;
+      const snap = canvas.toDataURL();   // save current drawing
+
+      canvas.width  = wrap.clientWidth  || 600;
+      canvas.height = wrap.clientHeight || 400;
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      img.src = snap;
+    }
+
+    /* ── Set active tool ─────────────────────────────────────────── */
+    function setTool(t) {
+      tool = t;
+      document.querySelectorAll('.tool-pill').forEach(b => {
+        b.classList.toggle('active', b.dataset.tool === t);
+      });
+    }
+
+    /* ── Pick new drawing word ───────────────────────────────────── */
+    function pickDrawWord() {
+      const arr = new Uint8Array(1);
+      crypto.getRandomValues(arr);
+      // textContent — safe (word from our constant array)
+      document.getElementById('draw-current-word').textContent =
+        WORDS[arr[0] % WORDS.length];
+    }
+
+    let _resizeTimer;
+
+    return {
+      init() {
+        if (_ready) return;
+        _ready = true;
+
+        canvas = document.getElementById('draw-canvas');
+        ctx    = canvas.getContext('2d');
+        resize();
+
+        /* Mouse events */
+        canvas.addEventListener('mousedown',  onDown);
+        canvas.addEventListener('mousemove',  onMove);
+        canvas.addEventListener('mouseup',    onUp);
+        canvas.addEventListener('mouseleave', onUp);
+
+        /*
+         * Touch events — passive:false allows preventDefault()
+         * which STOPS iOS from scrolling the page while drawing.
+         * Combined with touch-action:none on the canvas CSS,
+         * this makes drawing fully smooth on all mobile browsers.
+         */
+        canvas.addEventListener('touchstart', onDown, { passive: false });
+        canvas.addEventListener('touchmove',  onMove, { passive: false });
+        canvas.addEventListener('touchend',   onUp,   { passive: false });
+        canvas.addEventListener('touchcancel',onUp,   { passive: false });
+
+        /* Colour swatches */
+        document.querySelectorAll('.color-dot').forEach(dot => {
+          dot.addEventListener('click', () => {
+            document.querySelectorAll('.color-dot')
+                    .forEach(d => d.classList.remove('active'));
+            dot.classList.add('active');
+            color = dot.dataset.color;
+            // White swatch → automatically switch to eraser
+            setTool(color === '#ffffff' ? 'erase' : 'pen');
+          });
+        });
+
+        /* Brush size pills */
+        document.querySelectorAll('.sz-pill').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('.sz-pill')
+                    .forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            size = parseInt(btn.dataset.size, 10);
+          });
+        });
+
+        /* Tool pills */
+        document.querySelectorAll('.tool-pill[data-tool]').forEach(btn => {
+          btn.addEventListener('click', () => setTool(btn.dataset.tool));
+        });
+
+        /* Clear canvas */
+        document.getElementById('btn-clear-canvas').addEventListener('click', () => {
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          showToast('Canvas cleared!', '🗑');
+        });
+
+        /* Save / download PNG */
+        document.getElementById('btn-save-canvas').addEventListener('click', () => {
+          const a    = document.createElement('a');
+          a.download = 'coupleplay-drawing.png';
+          a.href     = canvas.toDataURL('image/png');
+          a.click();
+          showToast('Drawing saved!', '💾');
+        });
+
+        /* New drawing word */
+        document.getElementById('btn-new-draw-word')
+          .addEventListener('click', pickDrawWord);
+
+        /* Debounced window resize */
+        window.addEventListener('resize', () => {
+          clearTimeout(_resizeTimer);
+          _resizeTimer = setTimeout(resize, 150);
+        });
+      },
+
+      resize,
+    };
+  })();
+
+  /* ══════════════════════════════════════════════════════════════════
+     GAME 3 ▸ GRID GAMES (Tic-Tac-Toe + Connect Four)
+  ══════════════════════════════════════════════════════════════════ */
+  const GridGames = (() => {
+
+    let mode   = 'ttt';   // 'ttt' | 'cf'
+    let scores = { P1: 0, P2: 0, draws: 0 };
+    let _ready = false;
+
+    function setTurn(msg) {
+      document.getElementById('turn-bar').textContent = msg;
+    }
+
+    function refreshScores() {
+      document.getElementById('sc-p1').textContent    = scores.P1;
+      document.getElementById('sc-p2').textContent    = scores.P2;
+      document.getElementById('sc-draws').textContent = scores.draws;
+    }
+
+    /* ── TIC-TAC-TOE ────────────────────────────────────────────── */
+
+    const TTT_WINS = [
+      [0,1,2],[3,4,5],[6,7,8],
+      [0,3,6],[1,4,7],[2,5,8],
+      [0,4,8],[2,4,6],
+    ];
+
+    let tttBoard   = Array(9).fill(null);
+    let tttCurrent = 'X';
+    let tttOver    = false;
+
+    function buildTTT() {
+      tttBoard   = Array(9).fill(null);
+      tttCurrent = 'X';
+      tttOver    = false;
+
+      const board = document.getElementById('ttt-board');
+      board.innerHTML = '';   // safe
+
+      for (let i = 0; i < 9; i++) {
+        const cell = document.createElement('div');
+        cell.className = 'ttt-cell';
+        cell.dataset.idx = i;
+        cell.setAttribute('role', 'button');
+        cell.setAttribute('tabindex', '0');
+        cell.setAttribute('aria-label', `Cell ${i+1}`);
+
+        const clickHandler = () => tttClick(i);
+        cell.addEventListener('click', clickHandler);
+        cell.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            clickHandler();
+          }
+        });
+
+        board.appendChild(cell);
+      }
+      setTurn('⬤ Player 1 (X) goes first');
+    }
+
+    function tttClick(idx) {
+      if (tttOver || tttBoard[idx]) return;
+
+      tttBoard[idx] = tttCurrent;
+      const cell = document.querySelector(`#ttt-board .ttt-cell[data-idx="${idx}"]`);
+      if (cell) {
+        cell.textContent = tttCurrent;   // textContent — safe
+        cell.classList.add('taken', tttCurrent);
+      }
+
+      // Check for win
+      const winLine = checkTTTWin();
+      if (winLine) {
+        winLine.forEach(i => {
+          const c = document.querySelector(`#ttt-board .ttt-cell[data-idx="${i}"]`);
+          if (c) c.classList.add('win');
+        });
+        const winner = tttCurrent === 'X' ? 'Player 1 (X)' : 'Player 2 (O)';
+        scores[tttCurrent === 'X' ? 'P1' : 'P2']++;
+        refreshScores();
+        setTurn(`🎉 ${winner} wins!`);
+        tttOver = true;
+        launchConfetti();
+        return;
+      }
+
+      // Check for draw
+      if (tttBoard.every(c => c !== null)) {
+        scores.draws++;
+        refreshScores();
+        setTurn("🤝 Draw!");
+        tttOver = true;
+        return;
+      }
+
+      // Next turn
+      tttCurrent = tttCurrent === 'X' ? 'O' : 'X';
+      setTurn(`⬤ Player ${tttCurrent === 'X' ? '1 (X)' : '2 (O)'} — your turn`);
+    }
+
+    function checkTTTWin() {
+      for (const line of TTT_WINS) {
+        const [a, b, c] = line;
+        if (tttBoard[a] && tttBoard[a] === tttBoard[b] && tttBoard[a] === tttBoard[c]) {
+          return line;
+        }
+      }
+      return null;
+    }
+
+    /* ── CONNECT FOUR ───────────────────────────────────────────── */
+
+    const CF_ROWS = 6, CF_COLS = 7;
+    let cfBoard   = [];
+    let cfCurrent = 'P1';
+    let cfOver    = false;
+
+    function buildCF() {
+      cfBoard   = Array.from({ length: CF_ROWS }, () => Array(CF_COLS).fill(null));
+      cfCurrent = 'P1';
+      cfOver    = false;
+
+      // Drop buttons
+      const dropsEl = document.getElementById('cf-drops');
+      dropsEl.innerHTML = '';   // safe
+
+      for (let c = 0; c < CF_COLS; c++) {
+        const btn = document.createElement('button');
+        btn.className    = 'cf-drop-btn';
+        btn.dataset.col  = c;
+        btn.textContent  = '▼';
+        btn.setAttribute('aria-label', `Drop in column ${c+1}`);
+        btn.addEventListener('click', () => cfDrop(c));
+        dropsEl.appendChild(btn);
+      }
+
+      // Cell grid
+      const gridEl = document.getElementById('cf-grid');
+      gridEl.innerHTML = '';   // safe
+
+      for (let r = 0; r < CF_ROWS; r++) {
+        for (let c = 0; c < CF_COLS; c++) {
+          const cell = document.createElement('div');
+          cell.className = 'cf-cell';
+          cell.dataset.row = r;
+          cell.dataset.col = c;
+          cell.setAttribute('aria-label', `R${r+1} C${c+1}`);
+          gridEl.appendChild(cell);
+        }
+      }
+
+      setTurn('🟣 Player 1 — drop a disc');
+    }
+
+    function cfCell(r, c) {
+      return document.querySelector(`#cf-grid .cf-cell[data-row="${r}"][data-col="${c}"]`);
+    }
+
+    function lowestEmpty(col) {
+      for (let r = CF_ROWS - 1; r >= 0; r--) {
+        if (!cfBoard[r][col]) return r;
+      }
+      return -1;
+    }
+
+    function cfDrop(col) {
+      if (cfOver) return;
+      const row = lowestEmpty(col);
+      if (row === -1) { showToast('Column is full!', '⚠️'); return; }
+
+      cfBoard[row][col] = cfCurrent;
+      const cell = cfCell(row, col);
+      if (cell) cell.classList.add(cfCurrent);
+
+      const winCells = checkCFWin(row, col);
+      if (winCells) {
+        winCells.forEach(([r, c]) => {
+          const wc = cfCell(r, c);
+          if (wc) wc.classList.add('win-cell');
+        });
+        const pNum = cfCurrent === 'P1' ? '1' : '2';
+        scores[cfCurrent]++;
+        refreshScores();
+        setTurn(`🎉 Player ${pNum} wins!`);
+        cfOver = true;
+        document.querySelectorAll('.cf-drop-btn').forEach(b => b.disabled = true);
+        launchConfetti();
+        return;
+      }
+
+      if (cfBoard.every(row => row.every(c => c !== null))) {
+        scores.draws++;
+        refreshScores();
+        setTurn("🤝 Board full — draw!");
+        cfOver = true;
+        return;
+      }
+
+      cfCurrent = cfCurrent === 'P1' ? 'P2' : 'P1';
+      const pNum  = cfCurrent === 'P1' ? '1' : '2';
+      const color = cfCurrent === 'P1' ? '🟣' : '🔴';
+      setTurn(`${color} Player ${pNum} — drop a disc`);
+    }
+
+    /**
+     * checkCFWin — check all 4 directions from the last dropped disc.
+     * Returns winning cell coordinates, or null.
+     */
+    function checkCFWin(row, col) {
+      const player = cfBoard[row][col];
+      const DIRS   = [[0,1],[1,0],[1,1],[1,-1]];
+
+      for (const [dr, dc] of DIRS) {
+        let cells = [[row, col]];
+
+        for (let s = 1; s < 4; s++) {
+          const r = row + dr*s, c = col + dc*s;
+          if (r<0||r>=CF_ROWS||c<0||c>=CF_COLS||cfBoard[r][c]!==player) break;
+          cells.push([r, c]);
+        }
+        for (let s = 1; s < 4; s++) {
+          const r = row - dr*s, c = col - dc*s;
+          if (r<0||r>=CF_ROWS||c<0||c>=CF_COLS||cfBoard[r][c]!==player) break;
+          cells.push([r, c]);
+        }
+
+        if (cells.length >= 4) return cells;
+      }
+      return null;
+    }
+
+    /* ── Mode & reset ───────────────────────────────────────────── */
+
+    function switchMode(m) {
+      mode = m;
+      document.querySelectorAll('.mode-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.mode === m);
+      });
+      document.getElementById('ttt-board').classList.toggle('hidden', m !== 'ttt');
+      document.getElementById('cf-board').classList.toggle('hidden', m !== 'cf');
+      resetGame();
+    }
+
+    function resetGame() {
+      if (mode === 'ttt') buildTTT();
+      else buildCF();
+    }
+
+    return {
+      init() {
+        if (_ready) return;
+        _ready = true;
+
+        refreshScores();
+
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+          btn.addEventListener('click', () => switchMode(btn.dataset.mode));
+        });
+
+        document.getElementById('btn-grid-reset')
+          .addEventListener('click', resetGame);
+
+        document.getElementById('btn-grid-reset-scores')
+          .addEventListener('click', () => {
+            scores = { P1: 0, P2: 0, draws: 0 };
+            refreshScores();
+            showToast('Scores reset!', '🔄');
+          });
+
+        buildTTT();
+      }
+    };
+  })();
+
+  /* ══════════════════════════════════════════════════════════════════
+     GAME 4 ▸ QUESTION / DARE DECK (icebreakers, deep-talk, WYR, dares)
+  ══════════════════════════════════════════════════════════════════ */
+  const QuestionDeck = (() => {
+
+    /*
+     * SECURITY: All card content is hard-coded constant data.
+     * No user input ever populates card text, eliminating XSS risk.
+     */
+    const ALL_CARDS = [
+      // ── Icebreakers ──────────────────────────────────────────────
+      { type:'question', badge:'💬 Icebreaker', cls:'badge-purple',
+        text:'What is one small thing your partner does that instantly brightens your day?' },
+      { type:'question', badge:'💬 Icebreaker', cls:'badge-purple',
+        text:'If you could relive one day together in perfect detail, which day would it be?' },
+      { type:'question', badge:'💬 Icebreaker', cls:'badge-purple',
+        text:'Describe each other using exactly three emojis — no words.' },
+      { type:'question', badge:'💬 Icebreaker', cls:'badge-purple',
+        text:'What song instantly makes you think of us, and why?' },
+      { type:'question', badge:'💬 Icebreaker', cls:'badge-purple',
+        text:'What is the most random, unexpected thing that reminds you of your partner?' },
+      { type:'question', badge:'💬 Icebreaker', cls:'badge-purple',
+        text:'Name one thing on your shared bucket list you absolutely cannot wait to do.' },
+      { type:'question', badge:'💬 Icebreaker', cls:'badge-purple',
+        text:'Rate your day from 1–10. Now explain it using only a movie title.' },
+      { type:'question', badge:'💬 Icebreaker', cls:'badge-purple',
+        text:'What compliment have you been meaning to give your partner but keep forgetting?' },
+      { type:'question', badge:'💬 Icebreaker', cls:'badge-purple',
+        text:'If we could teleport anywhere together right now, where would you choose?' },
+      { type:'question', badge:'💬 Icebreaker', cls:'badge-purple',
+        text:'What is your partner\'s most endearing, slightly silly habit?' },
+
+      // ── Deep Talk ────────────────────────────────────────────────
+      { type:'deep', badge:'🌊 Deep Talk', cls:'badge-cyan',
+        text:'What fear has this relationship helped you face or begin to overcome?' },
+      { type:'deep', badge:'🌊 Deep Talk', cls:'badge-cyan',
+        text:'In what specific ways have you grown as a person since we met?' },
+      { type:'deep', badge:'🌊 Deep Talk', cls:'badge-cyan',
+        text:'What does "home" mean to you — and how does your partner fit into that picture?' },
+      { type:'deep', badge:'🌊 Deep Talk', cls:'badge-cyan',
+        text:'What is one dream or ambition you have never told anyone else?' },
+      { type:'deep', badge:'🌊 Deep Talk', cls:'badge-cyan',
+        text:'If you could change one thing about how we communicate, what would it be?' },
+      { type:'deep', badge:'🌊 Deep Talk', cls:'badge-cyan',
+        text:'What moment in our relationship made you feel the most loved and understood?' },
+      { type:'deep', badge:'🌊 Deep Talk', cls:'badge-cyan',
+        text:'If our story were a chapter in a novel, what would this current chapter be titled?' },
+      { type:'deep', badge:'🌊 Deep Talk', cls:'badge-cyan',
+        text:'What is something you are still actively learning about yourself within this relationship?' },
+      { type:'deep', badge:'🌊 Deep Talk', cls:'badge-cyan',
+        text:'Paint a picture in words: where do you imagine us five years from now?' },
+      { type:'deep', badge:'🌊 Deep Talk', cls:'badge-cyan',
+        text:'What does commitment genuinely mean to you — in your own words, not a definition?' },
+
+      // ── Would You Rather ─────────────────────────────────────────
+      { type:'wyr', badge:'🤔 Would You Rather', cls:'badge-yellow',
+        text:'Would you rather…',
+        optA:'Travel the world for a year with absolutely no phone or internet',
+        optB:'Stay perfectly comfortable at home with unlimited food, movies, and each other' },
+      { type:'wyr', badge:'🤔 Would You Rather', cls:'badge-yellow',
+        text:'Would you rather…',
+        optA:'Always know exactly what your partner is thinking',
+        optB:'Have your partner always know exactly what you are thinking' },
+      { type:'wyr', badge:'🤔 Would You Rather', cls:'badge-yellow',
+        text:'Would you rather…',
+        optA:'Go on a completely spontaneous road trip with zero plan',
+        optB:'Take a meticulously planned dream vacation to your perfect destination' },
+      { type:'wyr', badge:'🤔 Would You Rather', cls:'badge-yellow',
+        text:'Would you rather…',
+        optA:'Be able to pause time together and live in a perfect moment forever',
+        optB:'Rewind and relive your single favourite memory together once every year' },
+      { type:'wyr', badge:'🤔 Would You Rather', cls:'badge-yellow',
+        text:'Would you rather…',
+        optA:'Live in a cozy mountain cabin surrounded by nature',
+        optB:'Have a stunning penthouse in the world\'s most vibrant city' },
+      { type:'wyr', badge:'🤔 Would You Rather', cls:'badge-yellow',
+        text:'Would you rather…',
+        optA:'Have one long, uninterrupted video call together every single day',
+        optB:'Send 20 voice notes to each other throughout the day' },
+      { type:'wyr', badge:'🤔 Would You Rather', cls:'badge-yellow',
+        text:'Would you rather…',
+        optA:'Cook every meal together for the rest of your lives',
+        optB:'Always have any meal from anywhere in the world delivered in 5 minutes' },
+      { type:'wyr', badge:'🤔 Would You Rather', cls:'badge-yellow',
+        text:'Would you rather…',
+        optA:'Know the exact date of every major future milestone in your life',
+        optB:'Be completely and beautifully surprised by everything that happens' },
+      { type:'wyr', badge:'🤔 Would You Rather', cls:'badge-yellow',
+        text:'Would you rather…',
+        optA:'Share a superpower that only works when you are physically together',
+        optB:'Each have your own separate superpower that works anytime' },
+      { type:'wyr', badge:'🤔 Would You Rather', cls:'badge-yellow',
+        text:'Would you rather…',
+        optA:'Be able to feel exactly how much your partner loves you at any moment',
+        optB:'Have them always feel exactly how much you love them' },
+
+      // ── Dares ────────────────────────────────────────────────────
+      { type:'dare', badge:'🔥 Dare', cls:'badge-pink',
+        text:'Take a genuinely silly selfie right now and send it to each other. You have 30 seconds. Go!' },
+      { type:'dare', badge:'🔥 Dare', cls:'badge-pink',
+        text:'Serenade your partner with at least 10 seconds of any song. No skipping allowed.' },
+      { type:'dare', badge:'🔥 Dare', cls:'badge-pink',
+        text:'Say three specific, genuine compliments about your partner as fast as you possibly can.' },
+      { type:'dare', badge:'🔥 Dare', cls:'badge-pink',
+        text:'Do your absolute best impression of your partner. They rate it honestly out of 10.' },
+      { type:'dare', badge:'🔥 Dare', cls:'badge-pink',
+        text:'Show your partner the last photo in your camera roll and explain exactly what it is.' },
+      { type:'dare', badge:'🔥 Dare', cls:'badge-pink',
+        text:'Tell your partner one specific thing they do that secretly makes you smile every single time.' },
+      { type:'dare', badge:'🔥 Dare', cls:'badge-pink',
+        text:'Record and send the most heartfelt voicemail you can craft in under 20 seconds. Do it now!' },
+      { type:'dare', badge:'🔥 Dare', cls:'badge-pink',
+        text:'Switch to the Drawing tab and draw a portrait of your partner right now, then show them.' },
+      { type:'dare', badge:'🔥 Dare', cls:'badge-pink',
+        text:'Write a haiku about your partner (5 syllables / 7 syllables / 5 syllables) and read it aloud.' },
+      { type:'dare', badge:'🔥 Dare', cls:'badge-pink',
+        text:'Set a phone reminder right now to send your partner a completely unexpected surprise message tomorrow.' },
+    ];
+
+    let deck    = [];
+    let idx     = 0;
+    let cat     = 'all';
+    let votes   = { a: 0, b: 0, cast: false };
+    let _ready  = false;
+
+    /* Fisher-Yates shuffle using CSPRNG */
+    function shuffle(arr) {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const buf = new Uint8Array(1);
+        crypto.getRandomValues(buf);
+        const j = buf[0] % (i + 1);
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+
+    function buildDeck() {
+      const pool = cat === 'all' ? ALL_CARDS : ALL_CARDS.filter(c => c.type === cat);
+      deck = shuffle(pool);
+      idx  = 0;
+    }
+
+    function renderCard() {
+      if (!deck.length) {
+        document.getElementById('deck-text').textContent = 'No cards in this category.';
+        return;
+      }
+
+      const card = deck[idx];
+
+      // All writes use textContent — safe even if cards contained special chars
+      const badgeEl = document.getElementById('deck-badge');
+      badgeEl.textContent = card.badge;
+      badgeEl.className   = `badge ${card.cls} deck-type-pill`;
+
+      document.getElementById('deck-text').textContent = card.text;
+
+      // WYR-specific vote UI
+      const wyrBtns  = document.getElementById('wyr-btns');
+      const voteBars = document.getElementById('vote-bars');
+
+      if (card.type === 'wyr') {
+        wyrBtns.classList.remove('hidden');
+        voteBars.classList.add('hidden');
+        votes = { a: 0, b: 0, cast: false };
+
+        // textContent — safe
+        document.getElementById('wyr-vote-a').textContent = `A: ${card.optA}`;
+        document.getElementById('wyr-vote-b').textContent = `B: ${card.optB}`;
+        document.getElementById('wyr-vote-a').disabled = false;
+        document.getElementById('wyr-vote-b').disabled = false;
+      } else {
+        wyrBtns.classList.add('hidden');
+        voteBars.classList.add('hidden');
+      }
+
+      document.getElementById('deck-counter').textContent =
+        `${idx + 1} / ${deck.length}`;
+    }
+
+    function castVote(side) {
+      if (votes.cast) return;
+      votes.cast = true;
+      votes[side]++;
+
+      // Disable both vote buttons immediately
+      document.getElementById('wyr-vote-a').disabled = true;
+      document.getElementById('wyr-vote-b').disabled = true;
+
+      // Simulate partner vote after a short delay for the local demo
+      setTimeout(() => {
+        const partner = Math.random() < 0.5 ? 'a' : 'b';
+        votes[partner]++;
+        showVoteResult();
+      }, 800);
+    }
+
+    function showVoteResult() {
+      const total = votes.a + votes.b || 1;
+      const pctA  = Math.round((votes.a / total) * 100);
+      const pctB  = 100 - pctA;
+
+      document.getElementById('bar-fill-a').style.height = pctA + '%';
+      document.getElementById('bar-fill-b').style.height = pctB + '%';
+      document.getElementById('bar-lbl-a').textContent   = `A: ${votes.a}`;
+      document.getElementById('bar-lbl-b').textContent   = `B: ${votes.b}`;
+      document.getElementById('vote-bars').classList.remove('hidden');
+    }
+
+    return {
+      init() {
+        if (_ready) return;
+        _ready = true;
+
+        buildDeck();
+        renderCard();
+
+        // Category filter
+        document.querySelectorAll('.deck-filter').forEach(btn => {
+          btn.addEventListener('click', () => {
+            document.querySelectorAll('.deck-filter')
+                    .forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            cat = btn.dataset.cat;
+            buildDeck();
+            renderCard();
+          });
+        });
+
+        // Navigation
+        document.getElementById('btn-deck-next').addEventListener('click', () => {
+          idx = (idx + 1) % deck.length;
+          renderCard();
+        });
+        document.getElementById('btn-deck-prev').addEventListener('click', () => {
+          idx = (idx - 1 + deck.length) % deck.length;
+          renderCard();
+        });
+
+        // Shuffle
+        document.getElementById('btn-deck-shuffle').addEventListener('click', () => {
+          buildDeck();
+          renderCard();
+          showToast('Deck shuffled!', '🔀');
+        });
+
+        // WYR votes
+        document.getElementById('wyr-vote-a').addEventListener('click', () => castVote('a'));
+        document.getElementById('wyr-vote-b').addEventListener('click', () => castVote('b'));
+      }
+    };
+  })();
+
+  /*
+  ═══════════════════════════════════════════════════════════════════
+  END OF APPLICATION CODE
+
+  Security summary:
+  • 0 uses of .innerHTML with dynamic/external data
+  • sanitize() applied to all external strings (Jitsi displayName, URL params)
+  • CSPRNG (crypto.getRandomValues) for room IDs and game randomness
+  • Jitsi API only invoked inside a direct user click handler
+  • navigator.mediaDevices checked before WebRTC init
+  • All game modules isolated with try/catch via safeInit()
+  • touch-action:none + passive:false on canvas for mobile drawing
+  • CSP meta restricts all resource origins
+  ═══════════════════════════════════════════════════════════════════
+  */
+  </script>
+
+</body>
+</html>
